@@ -1,0 +1,98 @@
+package application
+
+import (
+	"context"
+	"errors"
+
+	"e-commence/internal/domain"
+	"e-commence/internal/infrastructure"
+)
+
+type UseCases struct {
+	products domain.ProductRepository
+	cart     domain.CartRepository
+	orders   domain.OrderRepository
+	payments infrastructure.PaymentProvider
+}
+
+func NewUseCases(
+	products domain.ProductRepository,
+	cart domain.CartRepository,
+	orders domain.OrderRepository,
+	payments infrastructure.PaymentProvider,
+) *UseCases {
+	return &UseCases{
+		products: products,
+		cart:     cart,
+		orders:   orders,
+		payments: payments,
+	}
+}
+
+type AddToCartInput struct {
+	ProductID string
+	Quantity  int
+}
+
+func (u *UseCases) AddProductToCart(ctx context.Context, in AddToCartInput) error {
+	// Application layer coordinates but generally doesn't "own" new errors.
+	if _, err := u.products.Get(ctx, in.ProductID); err != nil {
+		return err
+	}
+	if err := u.products.Reserve(ctx, in.ProductID, in.Quantity); err != nil {
+		return err
+	}
+	return u.cart.AddItem(ctx, domain.CartItem{ProductID: in.ProductID, Quantity: in.Quantity})
+}
+
+type CheckoutOutput struct {
+	OrderID    string
+	TotalCents int
+}
+
+func (u *UseCases) Checkout(ctx context.Context) (CheckoutOutput, error) {
+	items, err := u.cart.Items(ctx)
+	if err != nil {
+		return CheckoutOutput{}, err
+	}
+	if len(items) == 0 {
+		return CheckoutOutput{}, domain.ErrCartEmpty
+	}
+
+	total, err := u.totalForItems(ctx, items)
+	if err != nil {
+		return CheckoutOutput{}, err
+	}
+
+	// Translate payment-provider failures into business meaning.
+	if err := u.payments.Charge(ctx, total); err != nil {
+		if errors.Is(err, infrastructure.ErrPaymentProviderDeclined) {
+			return CheckoutOutput{}, domain.ErrPaymentDeclined
+		}
+		// Timeout is infra-owned; the API layer maps it to 503.
+		return CheckoutOutput{}, err
+	}
+
+	order, err := u.orders.Create(ctx, domain.Order{TotalCents: total, Items: items})
+	if err != nil {
+		return CheckoutOutput{}, err
+	}
+	if err := u.cart.Clear(ctx); err != nil {
+		return CheckoutOutput{}, err
+	}
+
+	return CheckoutOutput{OrderID: order.ID, TotalCents: order.TotalCents}, nil
+}
+
+func (u *UseCases) totalForItems(ctx context.Context, items []domain.CartItem) (int, error) {
+	total := 0
+	for _, it := range items {
+		p, err := u.products.Get(ctx, it.ProductID)
+		if err != nil {
+			return 0, err
+		}
+		total += p.PriceCents * it.Quantity
+	}
+	return total, nil
+}
+
