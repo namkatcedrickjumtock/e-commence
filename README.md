@@ -1,95 +1,163 @@
 # Tiny e-commerce backend (net/http) — layered errors demo
 
-This repo is intentionally small and built for a 10–15 minute conference demo.
-
-The point is **layered architecture and error ownership**:
+This repo is built for a 10–15 minute conference demo on **layered architecture and error ownership**.
 
 > Errors are defined where they originate and propagated upward without noisy wrapping.
 
 ## Layers
 
 ```txt
-/cmd
-/internal
-  /api            HTTP (presentation)
-  /application    use-cases (orchestration)
-  /domain         entities + business errors + ports
-  /infrastructure in-memory storage + fake payment provider
+api/           HTTP handlers, request parsing, response serialization (presentation)
+services/      domain types, business errors, use-case orchestration (business)
+persistence/   sqlc-generated PostgreSQL queries + Stripe payment mock (persistence)
+cmd/           entry point, config, wiring
 ```
 
-`sqlc` integration is also included under `internal/domain/sql/` + `sqlc.yaml` to demonstrate a production-style persistence boundary.
+## Prerequisites
 
-## Running
+- Go 1.22+
+- Docker (for PostgreSQL)
+
+## Quick start
 
 ```bash
-go run ./cmd/server
-```
+# Start PostgreSQL
+docker compose up -d
 
-Environment:
-- `DEMO_PAYMENT_MODE`: `ok` (default), `decline`, `timeout`
+# Run the app (reads .env or env vars)
+cp .env.example .env
+go run ./cmd
+```
 
 ## Endpoints
 
-### Add product to cart
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/products` | List all products |
+| POST | `/products` | Create a product |
+| GET | `/products/{id}` | Get product by ID |
+| GET | `/products/{id}/inventory` | Check product stock |
+| POST | `/cart/items` | Add product to cart |
+| POST | `/checkout` | Checkout cart |
+| GET | `/orders` | List all orders |
+| GET | `/orders/{id}` | Get order by ID |
+
+### Examples — full flow
 
 ```bash
+# ── Products ──────────────────────────────────────────────
+
+# List all products
+curl -sS localhost:8080/products
+
+# Create a product
+curl -sS -X POST localhost:8080/products \
+  -H 'content-type: application/json' \
+  -d '{"name":"Widget Pro","price_cents":3999,"stock":15}'
+
+# Get a single product by ID
+curl -sS localhost:8080/products/p_1
+
+# Check product stock
+curl -sS localhost:8080/products/p_1/inventory
+
+# ── Cart ──────────────────────────────────────────────────
+
+# Add product to cart
 curl -sS -X POST localhost:8080/cart/items \
   -H 'content-type: application/json' \
-  -d '{"product_id":"p_1","quantity":1}'
+  -d '{"product_id":"p_1","quantity":2}'
+
+# ── Checkout ──────────────────────────────────────────────
+
+# Checkout (returns order_id)
+curl -sS -X POST localhost:8080/checkout
+
+# ── Orders ────────────────────────────────────────────────
+
+# List all orders
+curl -sS localhost:8080/orders
+
+# Get a single order by ID (replace o_1 with actual order_id)
+curl -sS localhost:8080/orders/o_1
 ```
 
-### Checkout
+### Error-mode examples
 
 ```bash
+# Start server in a specific failure mode
+PAYMENT_MODE=card_declined go run ./cmd
+
+# Then run checkout — expect HTTP 402
+curl -sS -X POST localhost:8080/checkout
+
+# Re-run checkout after switching to other modes:
+#   processing_error  → 422
+#   rate_limit        → 503
+#   api_timeout       → 503
+PAYMENT_MODE=api_timeout go run ./cmd
 curl -sS -X POST localhost:8080/checkout
 ```
 
-To demo payment timeout:
+## Payment modes
+
+Set `PAYMENT_MODE` env var:
+
+| Mode | Behaviour | HTTP |
+|------|-----------|------|
+| `ok` | Payment succeeds | 201 |
+| `card_declined` | Card declined | 402 |
+| `processing_error` | Processing error | 422 |
+| `rate_limit` | Rate limited | 503 |
+| `api_timeout` | API timeout | 503 |
 
 ```bash
-DEMO_PAYMENT_MODE=timeout go run ./cmd/server
+PAYMENT_MODE=card_declined go run ./cmd
 ```
 
-## Error responses (shape)
+## Error ownership by layer
 
-Errors are returned as:
+| Error | Layer | HTTP |
+|---|---|---|
+| `invalid json` | presentation | 400 |
+| `missing field` | presentation | 400 |
+| `invalid product id` | presentation | 400 |
+| `product not found` | business | 404 |
+| `duplicate cart item` | business | 409 |
+| `product out of stock` | business | 409 |
+| `cart is empty` | business | 409 |
+| `payment declined` | business | 402 |
+| `database unavailable` | persistence | 503 |
+| `stripe: processing error` | persistence | 422 |
+| `stripe: too many requests` | persistence | 503 |
+| `payment provider timeout` | persistence | 503 |
 
-```json
-{ "error": "product out of stock" }
+## Architecture approach
+
+- **Sentinel errors** (`var ErrX = errors.New(...)`) are defined at the layer they originate
+- Errors propagate **upward without wrapping** — no `fmt.Errorf("checkout failed: %w", err)`
+- The API layer maps errors to HTTP status codes using `errors.Is`
+- Infrastructure errors (Stripe, DB) pass through the business layer untouched
+- Business-meaningful third-party errors (card declined) are translated to business sentinels via `%w`
+
+## Error propagation example
+
+When a card is declined by Stripe:
+
+```txt
+persistence.StripeProvider  →  returns fmt.Errorf("%w: ...", services.ErrPaymentDeclined)
+                                  ↓
+services.Checkout           →  errors.Is(err, ErrPaymentDeclined) → true → propagate
+                                  ↓
+api.writeError              →  errors.Is(err, services.ErrPaymentDeclined) → 402
 ```
 
-The exact message is the **layer-owned error contract** (e.g. `domain.ErrProductOutOfStock`).
+When Stripe times out:
 
-## sqlc (optional, for persistence demo)
-
-`sqlc` isn’t a runtime dependency; it only generates Go code.
-
-Install `sqlc`:
-
-```bash
-go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+```txt
+persistence.StripeProvider  →  returns fmt.Errorf("%w: ...", ErrPaymentProviderTimeout)
+                                  ↓
+services.Checkout           →  errors.Is(err, ErrPaymentDeclined) → false → propagate raw
+                                  ↓
+api.writeError              →  errors.Is(err, persistence.ErrPaymentProviderTimeout) → 503
 ```
-
-Generate:
-
-```bash
-sqlc generate
-```
-
-Inputs:
-- `internal/domain/sql/schema.sql`
-- `internal/domain/sql/queries.sql`
-- `sqlc.yaml`
-
-Output (configured):
-- `internal/domain/db`
-
-### Notes (stdlib-only runtime)
-
-This demo intentionally keeps the runtime **standard-library only**. That means:
-
-- The `sqlc`-generated code will compile (it uses `database/sql`), but
-- you still need a real database driver (third-party import) to actually connect at runtime.
-
-For the conference demo, the app runs against the in-memory infrastructure store, and `sqlc` exists to showcase the **persistence boundary + error translation** approach.
-

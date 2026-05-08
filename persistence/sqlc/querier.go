@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package persistence
+package sqlc
 
 import (
 	"context"
@@ -12,9 +12,15 @@ type Querier interface {
 	AddOrderItem(ctx context.Context, arg AddOrderItemParams) error
 	ClearCart(ctx context.Context) error
 	CreateOrder(ctx context.Context, arg CreateOrderParams) error
+	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
+	GetOrder(ctx context.Context, id string) (Order, error)
 	GetProduct(ctx context.Context, id string) (Product, error)
+	GetProductByName(ctx context.Context, name string) (Product, error)
 	InsertCartItem(ctx context.Context, arg InsertCartItemParams) error
 	ListCartItems(ctx context.Context) ([]CartItem, error)
+	ListOrderItems(ctx context.Context, orderID string) ([]ListOrderItemsRow, error)
+	ListOrders(ctx context.Context) ([]Order, error)
+	ListProducts(ctx context.Context) ([]Product, error)
 	ReserveStock(ctx context.Context, arg ReserveStockParams) error
 }
 

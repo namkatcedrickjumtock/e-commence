@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package persistence
+package sqlc
 
 type CartItem struct {
 	ProductID string `json:"product_id"`

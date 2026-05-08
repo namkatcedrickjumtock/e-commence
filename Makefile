@@ -1,20 +1,15 @@
-.PHONY: install-tools check-env gen database
- 
+.PHONY: install-tools check-env run database
+
 install-tools:
 	@if [ ! $$(which go) ]; then \
 		echo "golang not found."; \
 		echo "Try installing Go..."; \
 		exit 1; \
 	fi
-	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-	@if [ ! $$(which migrate) ]; then \
-		echo "The 'migrate' command was not found in your path. You most likely need to add \$$$${HOME}/go/bin to your PATH."; \
-		exit 1; \
-	fi
 
-run: check-env database
-	go run ./cmd/api
- 
+run: check-env
+	go run ./cmd
+
 check-env:
 	go mod tidy
 	@if [ ! -f .env ]; then \
@@ -27,4 +22,3 @@ gen:
 
 database:
 	docker compose up -d
- 
