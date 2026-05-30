@@ -1,163 +1,203 @@
-# Tiny e-commerce backend (net/http) — layered errors demo
+# e-commerce backend — GopherCon Europe 2026 Demo
 
-This repo is built for a 10–15 minute conference demo on **layered architecture and error ownership**.
+**Talk:** Error Tracing: Lessons Learned From the Trenches
+**Branch:** `v0.1` — Demo Part 1: The Bad Version
 
-> Errors are defined where they originate and propagated upward without noisy wrapping.
+> This branch intentionally demonstrates poor error handling patterns in a layered architecture.
+> Demo Part 2 (the structured version) lives on `main`.
 
 ## Layers
 
-```txt
+```
 api/           HTTP handlers, request parsing, response serialization (presentation)
-services/      domain types, business errors, use-case orchestration (business)
-persistence/   sqlc-generated PostgreSQL queries + Stripe payment mock (persistence)
+services/      business rules, use-case orchestration (business)
+persistence/   PostgreSQL queries + Flutterwave payment mock (persistence)
 cmd/           entry point, config, wiring
 ```
 
 ## Prerequisites
 
 - Go 1.22+
-- Docker (for PostgreSQL)
+- Docker
+- jq (`brew install jq`)
 
 ## Quick start
 
 ```bash
-# Start PostgreSQL
+# 1. Start PostgreSQL
 docker compose up -d
 
-# Run the app (reads .env or env vars)
+# 2. Apply schema (once per fresh database)
+make migrate
+
+# 3. Copy env and run
 cp .env.example .env
-go run ./cmd
+make run
 ```
 
-## Endpoints
+The server listens on `:8080`.
+
+---
+
+## Demo — 4 bad error handling scenarios
+
+### Setup (run once before any scenario)
+
+```bash
+curl -X POST localhost:8080/demo/reset
+curl -X POST localhost:8080/demo/seed
+```
+
+---
+
+### Scenario 1 — Excessive Wrapping
+
+Every layer adds its own `fmt.Errorf` wrapper. The error chain becomes a paragraph.
+
+```bash
+curl localhost:8080/orders/o_ghost | jq .
+```
+
+**Expected response:**
+```json
+{
+  "error": "handler: GET /orders/{id} failed: service layer: failed to retrieve order details: order lookup failed: repository: GetOrder query failed: order record not found in database: sql: no rows in result set"
+}
+```
+
+Point to make: four layers, one missing row, zero useful signal.
+
+---
+
+### Scenario 2 — Abstraction Leakage
+
+`services/services.go` and `api/http.go` both import `database/sql` and `github.com/lib/pq`.
+Business logic branches on `sql.ErrNoRows` — an infrastructure detail.
+
+```bash
+curl localhost:8080/products/p_ghost | jq .
+```
+
+**Expected response:**
+```json
+{
+  "error": "handler: GET /products/{id} failed: service: product not found in database catalog: sql query returned no rows: repository: GetProduct query failed: database error: sql: no rows in result set"
+}
+```
+
+Point to make: `sql: no rows in result set` reached the HTTP client.
+Open `services/services.go` and show the `import "database/sql"` line.
+
+---
+
+### Scenario 3 — Meaning Gets Reinterpreted
+
+Same root cause as Scenario 2 (product doesn't exist) but through a different code path.
+The service layer relabels `sql.ErrNoRows` as `"stock data unavailable"`.
+`writeError` maps `"unavailable"` → **503**, not 404.
+
+```bash
+curl -i -X POST localhost:8080/cart/items \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":"p_ghost","quantity":1}'
+```
+
+**Expected response:**
+```
+HTTP/1.1 503 Service Unavailable
+
+{
+  "error": "handler: POST /cart/items failed: service: cart operation failed: inventory check failed: stock data unavailable: repository: GetProduct query failed: database error: sql: no rows in result set"
+}
+```
+
+Point to make: the product just doesn't exist — this should be 404.
+The meaning changed twice before reaching the client, and the wrong status was returned.
+
+---
+
+### Scenario 4 — External Provider Error Leakage
+
+Raw `FlutterwaveError` fields — internal code, region, transaction ref, retryable flag —
+reach the HTTP response body with no abstraction.
+
+```bash
+# Step 1 — set payment mode (no server restart needed)
+curl -X POST localhost:8080/demo/payment-mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"card_declined"}'
+
+# Step 2 — add a product to cart (use the ID returned by /demo/seed)
+curl -X POST localhost:8080/cart/items \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":"<id>","quantity":1}'
+
+# Step 3 — checkout
+curl -X POST localhost:8080/checkout | jq .
+```
+
+**Expected response:**
+```json
+{
+  "error": "handler: POST /checkout failed: service layer: payment processing failed: flutterwave error FW-9082 region=eu-west retryable=false tx_ref=FW-TXN-84712947: CARD_DECLINED: insufficient_funds, issuer_code=05, network=VISA_EU"
+}
+```
+
+Point to make: internal topology, transaction reference, issuer codes, and retry policy
+all reached the API client. The payment layer has no error boundary.
+
+```bash
+# Reset payment mode when done
+curl -X POST localhost:8080/demo/payment-mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"ok"}'
+```
+
+---
+
+## Makefile targets
+
+```bash
+make scenario-1     # excessive wrapping
+make scenario-2     # abstraction leakage
+make scenario-3     # meaning reinterpreted (shows wrong HTTP status)
+make scenario-4     # provider error leakage
+make scenario-all   # all four in sequence
+```
+
+---
+
+## Demo management endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/products` | List all products |
-| POST | `/products` | Create a product |
-| GET | `/products/{id}` | Get product by ID |
-| GET | `/products/{id}/inventory` | Check product stock |
-| POST | `/cart/items` | Add product to cart |
-| POST | `/checkout` | Checkout cart |
-| GET | `/orders` | List all orders |
-| GET | `/orders/{id}` | Get order by ID |
+| `POST` | `/demo/reset` | Clear all tables |
+| `POST` | `/demo/seed` | Insert a demo product |
+| `POST` | `/demo/payment-mode` | Change payment failure mode at runtime |
 
-### Examples — full flow
+---
 
-```bash
-# ── Products ──────────────────────────────────────────────
+## All endpoints
 
-# List all products
-curl -sS localhost:8080/products
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/products` | List all products |
+| `POST` | `/products` | Create a product |
+| `GET` | `/products/{id}` | Get product by ID |
+| `GET` | `/products/{id}/inventory` | Check product stock |
+| `POST` | `/cart/items` | Add product to cart |
+| `POST` | `/checkout` | Checkout cart |
+| `GET` | `/orders` | List all orders |
+| `GET` | `/orders/{id}` | Get order by ID |
 
-# Create a product
-curl -sS -X POST localhost:8080/products \
-  -H 'content-type: application/json' \
-  -d '{"name":"Widget Pro","price_cents":3999,"stock":15}'
+---
 
-# Get a single product by ID
-curl -sS localhost:8080/products/p_1
+## Database
 
-# Check product stock
-curl -sS localhost:8080/products/p_1/inventory
-
-# ── Cart ──────────────────────────────────────────────────
-
-# Add product to cart
-curl -sS -X POST localhost:8080/cart/items \
-  -H 'content-type: application/json' \
-  -d '{"product_id":"p_1","quantity":2}'
-
-# ── Checkout ──────────────────────────────────────────────
-
-# Checkout (returns order_id)
-curl -sS -X POST localhost:8080/checkout
-
-# ── Orders ────────────────────────────────────────────────
-
-# List all orders
-curl -sS localhost:8080/orders
-
-# Get a single order by ID (replace o_1 with actual order_id)
-curl -sS localhost:8080/orders/o_1
-```
-
-### Error-mode examples
-
-```bash
-# Start server in a specific failure mode
-PAYMENT_MODE=card_declined go run ./cmd
-
-# Then run checkout — expect HTTP 402
-curl -sS -X POST localhost:8080/checkout
-
-# Re-run checkout after switching to other modes:
-#   processing_error  → 422
-#   rate_limit        → 503
-#   api_timeout       → 503
-PAYMENT_MODE=api_timeout go run ./cmd
-curl -sS -X POST localhost:8080/checkout
-```
-
-## Payment modes
-
-Set `PAYMENT_MODE` env var:
-
-| Mode | Behaviour | HTTP |
-|------|-----------|------|
-| `ok` | Payment succeeds | 201 |
-| `card_declined` | Card declined | 402 |
-| `processing_error` | Processing error | 422 |
-| `rate_limit` | Rate limited | 503 |
-| `api_timeout` | API timeout | 503 |
-
-```bash
-PAYMENT_MODE=card_declined go run ./cmd
-```
-
-## Error ownership by layer
-
-| Error | Layer | HTTP |
-|---|---|---|
-| `invalid json` | presentation | 400 |
-| `missing field` | presentation | 400 |
-| `invalid product id` | presentation | 400 |
-| `product not found` | business | 404 |
-| `duplicate cart item` | business | 409 |
-| `product out of stock` | business | 409 |
-| `cart is empty` | business | 409 |
-| `payment declined` | business | 402 |
-| `database unavailable` | persistence | 503 |
-| `stripe: processing error` | persistence | 422 |
-| `stripe: too many requests` | persistence | 503 |
-| `payment provider timeout` | persistence | 503 |
-
-## Architecture approach
-
-- **Sentinel errors** (`var ErrX = errors.New(...)`) are defined at the layer they originate
-- Errors propagate **upward without wrapping** — no `fmt.Errorf("checkout failed: %w", err)`
-- The API layer maps errors to HTTP status codes using `errors.Is`
-- Infrastructure errors (Stripe, DB) pass through the business layer untouched
-- Business-meaningful third-party errors (card declined) are translated to business sentinels via `%w`
-
-## Error propagation example
-
-When a card is declined by Stripe:
-
-```txt
-persistence.StripeProvider  →  returns fmt.Errorf("%w: ...", services.ErrPaymentDeclined)
-                                  ↓
-services.Checkout           →  errors.Is(err, ErrPaymentDeclined) → true → propagate
-                                  ↓
-api.writeError              →  errors.Is(err, services.ErrPaymentDeclined) → 402
-```
-
-When Stripe times out:
-
-```txt
-persistence.StripeProvider  →  returns fmt.Errorf("%w: ...", ErrPaymentProviderTimeout)
-                                  ↓
-services.Checkout           →  errors.Is(err, ErrPaymentDeclined) → false → propagate raw
-                                  ↓
-api.writeError              →  errors.Is(err, persistence.ErrPaymentProviderTimeout) → 503
-```
+| Setting | Value |
+|---------|-------|
+| Container | `gophercon-demo` |
+| Database | `gophercon` |
+| Port | `5433` |
+| User | `adminuser` |
+| Password | `postgres` |

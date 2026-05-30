@@ -78,9 +78,12 @@ func run() error {
 	logger.Println("connected to postgres")
 
 	repo := persistence.NewPostgresRepo(sqlDB)
-	payments := persistence.NewStripeProvider(persistence.ParsePaymentMode(cfg.Payment.Mode))
+	payments := persistence.NewFlutterwaveProvider(persistence.ParsePaymentMode(cfg.Payment.Mode))
 	svc := services.NewService(repo, payments)
-	handler := api.NewHandler(svc, logger)
+
+	// DEMO BAD PATTERN: handler receives direct references to infrastructure
+	// (payments + repo) so demo endpoints can bypass the service layer.
+	handler := api.NewHandler(svc, logger, payments, repo)
 
 	srv := &http.Server{
 		Addr:              cfg.Web.Addr,

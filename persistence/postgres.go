@@ -3,16 +3,21 @@ package persistence
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/namkatcedrickjumtock/e-commence/persistence/sqlc"
 )
 
-// PostgresRepo wraps the sqlc-generated *Queries and exposes
-// business-oriented data-access methods. Every method translates
-// raw database errors into sentinel errors owned by the persistence layer
-// so that callers never need to know about database/sql or PostgreSQL details.
+// PostgresRepo wraps sqlc-generated queries.
+//
+// DEMO BAD PATTERNS:
+//   - sql.ErrNoRows is NEVER translated into a sentinel error.
+//     Raw database/sql errors propagate upward, coupling every caller to SQL.
+//   - Every method wraps with 2-3 nested messages that repeat context
+//     already present in the error itself ("database error: sql: ...").
+//   - The caller receives opaque chains like:
+//     "repository: GetProduct query failed: database error: sql: no rows in result set"
+//     and must either string-match or check sql.ErrNoRows directly.
 type PostgresRepo struct {
 	db *sql.DB
 	q  *sqlc.Queries
@@ -22,15 +27,12 @@ func NewPostgresRepo(db *sql.DB) *PostgresRepo {
 	return &PostgresRepo{db: db, q: sqlc.New(db)}
 }
 
- 
-
 func (r *PostgresRepo) Get(ctx context.Context, id string) (Product, error) {
 	p, err := r.q.GetProduct(ctx, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Product{}, ErrProductNotFound
-		}
-		return Product{}, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		// DEMO: no sql.ErrNoRows → ErrProductNotFound translation.
+		// Raw sql error leaks up. Every caller must know about database/sql.
+		return Product{}, fmt.Errorf("repository: GetProduct query failed: database error: %w", err)
 	}
 	return Product{
 		ID:         p.ID,
@@ -45,12 +47,9 @@ func (r *PostgresRepo) GetByName(ctx context.Context, name string) (Product, err
 		`SELECT id, name, price_cents, stock FROM products WHERE name = $1`, name)
 
 	var p sqlc.Product
-	err := row.Scan(&p.ID, &p.Name, &p.PriceCents, &p.Stock)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Product{}, ErrProductNotFound
-		}
-		return Product{}, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+	if err := row.Scan(&p.ID, &p.Name, &p.PriceCents, &p.Stock); err != nil {
+		// DEMO: raw scan error leaks — includes "sql: no rows in result set" verbatim.
+		return Product{}, fmt.Errorf("repository: GetByName query failed: database error: %w", err)
 	}
 	return Product{
 		ID:         p.ID,
@@ -64,7 +63,7 @@ func (r *PostgresRepo) List(ctx context.Context) ([]Product, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, name, price_cents, stock FROM products ORDER BY id`)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return nil, fmt.Errorf("repository: List query failed: database connection error: %w", err)
 	}
 	defer rows.Close()
 
@@ -72,7 +71,7 @@ func (r *PostgresRepo) List(ctx context.Context) ([]Product, error) {
 	for rows.Next() {
 		var p sqlc.Product
 		if err := rows.Scan(&p.ID, &p.Name, &p.PriceCents, &p.Stock); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+			return nil, fmt.Errorf("repository: List scan failed: database row scan error: %w", err)
 		}
 		out = append(out, Product{
 			ID:         p.ID,
@@ -82,17 +81,17 @@ func (r *PostgresRepo) List(ctx context.Context) ([]Product, error) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return nil, fmt.Errorf("repository: List iteration failed: database cursor error: %w", err)
 	}
 	return out, nil
 }
 
 func (r *PostgresRepo) Create(ctx context.Context, product Product) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO products (name, price_cents, stock) VALUES ($1, $2, $3)`,
-		product.Name, product.PriceCents, product.Stock)
+		`INSERT INTO products (id, name, price_cents, stock) VALUES ($1, $2, $3, $4)`,
+		product.ID, product.Name, product.PriceCents, product.Stock)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return fmt.Errorf("repository: Create insert failed: database write error: %w", err)
 	}
 	return nil
 }
@@ -103,12 +102,10 @@ func (r *PostgresRepo) Reserve(ctx context.Context, productID string, quantity i
 		Stock: int32(quantity),
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return fmt.Errorf("repository: Reserve stock update failed: database write error: %w", err)
 	}
 	return nil
 }
-
- 
 
 func (r *PostgresRepo) AddItem(ctx context.Context, item CartItem) error {
 	err := r.q.InsertCartItem(ctx, sqlc.InsertCartItemParams{
@@ -116,7 +113,8 @@ func (r *PostgresRepo) AddItem(ctx context.Context, item CartItem) error {
 		Quantity:  int32(item.Quantity),
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		// DEMO: raw postgres error leaks — includes pq-specific constraint violation text.
+		return fmt.Errorf("repository layer: failed to add cart item: database error: %w", err)
 	}
 	return nil
 }
@@ -124,7 +122,7 @@ func (r *PostgresRepo) AddItem(ctx context.Context, item CartItem) error {
 func (r *PostgresRepo) Items(ctx context.Context) ([]CartItem, error) {
 	rows, err := r.q.ListCartItems(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return nil, fmt.Errorf("repository: ListCartItems query failed: database read error: %w", err)
 	}
 	items := make([]CartItem, 0, len(rows))
 	for _, row := range rows {
@@ -138,17 +136,21 @@ func (r *PostgresRepo) Items(ctx context.Context) ([]CartItem, error) {
 
 func (r *PostgresRepo) Clear(ctx context.Context) error {
 	if err := r.q.ClearCart(ctx); err != nil {
-		return fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return fmt.Errorf("repository: ClearCart delete failed: database write error: %w", err)
 	}
 	return nil
 }
 
 func (r *PostgresRepo) CreateOrder(ctx context.Context, order Order) (Order, error) {
+	// DEMO: excessive wrapping — 4 clauses for a single INSERT failure.
 	if err := r.q.CreateOrder(ctx, sqlc.CreateOrderParams{
 		ID:         order.ID,
 		TotalCents: int32(order.TotalCents),
 	}); err != nil {
-		return Order{}, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return Order{}, fmt.Errorf(
+			"repository layer: failed to persist order record: CreateOrder INSERT failed: database transaction error: %w",
+			err,
+		)
 	}
 	for _, it := range order.Items {
 		if err := r.q.AddOrderItem(ctx, sqlc.AddOrderItemParams{
@@ -156,7 +158,10 @@ func (r *PostgresRepo) CreateOrder(ctx context.Context, order Order) (Order, err
 			ProductID: it.ProductID,
 			Quantity:  int32(it.Quantity),
 		}); err != nil {
-			return Order{}, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+			return Order{}, fmt.Errorf(
+				"repository layer: failed to persist order item: AddOrderItem INSERT failed: order_id=%s product_id=%s: database transaction error: %w",
+				order.ID, it.ProductID, err,
+			)
 		}
 	}
 	return order, nil
@@ -168,10 +173,12 @@ func (r *PostgresRepo) GetOrder(ctx context.Context, id string) (Order, error) {
 
 	var o sqlc.Order
 	if err := row.Scan(&o.ID, &o.TotalCents); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Order{}, ErrOrderNotFound
-		}
-		return Order{}, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		// DEMO: no ErrOrderNotFound sentinel. Raw sql.ErrNoRows leaks.
+		// Caller receives: "repository: GetOrder query failed: order record not found in database: sql: no rows in result set"
+		return Order{}, fmt.Errorf(
+			"repository: GetOrder query failed: order record not found in database: %w",
+			err,
+		)
 	}
 
 	items, err := r.orderItems(ctx, id)
@@ -190,7 +197,7 @@ func (r *PostgresRepo) ListOrders(ctx context.Context) ([]Order, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, total_cents FROM orders ORDER BY id`)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return nil, fmt.Errorf("repository: ListOrders query failed: database read error: %w", err)
 	}
 	defer rows.Close()
 
@@ -198,7 +205,7 @@ func (r *PostgresRepo) ListOrders(ctx context.Context) ([]Order, error) {
 	for rows.Next() {
 		var o sqlc.Order
 		if err := rows.Scan(&o.ID, &o.TotalCents); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+			return nil, fmt.Errorf("repository: ListOrders scan failed: database row scan error: %w", err)
 		}
 		items, err := r.orderItems(ctx, o.ID)
 		if err != nil {
@@ -211,7 +218,7 @@ func (r *PostgresRepo) ListOrders(ctx context.Context) ([]Order, error) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return nil, fmt.Errorf("repository: ListOrders iteration failed: database cursor error: %w", err)
 	}
 	return out, nil
 }
@@ -220,7 +227,7 @@ func (r *PostgresRepo) orderItems(ctx context.Context, orderID string) ([]CartIt
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT product_id, quantity FROM order_items WHERE order_id = $1`, orderID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+		return nil, fmt.Errorf("repository: orderItems query failed: database read error: %w", err)
 	}
 	defer rows.Close()
 
@@ -228,9 +235,25 @@ func (r *PostgresRepo) orderItems(ctx context.Context, orderID string) ([]CartIt
 	for rows.Next() {
 		var oi CartItem
 		if err := rows.Scan(&oi.ProductID, &oi.Quantity); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrDatabaseUnavailable, err)
+			return nil, fmt.Errorf("repository: orderItems scan failed: database row scan error: %w", err)
 		}
 		items = append(items, oi)
 	}
 	return items, rows.Err()
+}
+
+// Reset deletes all rows from every table. Demo-only — no auth, no guards.
+// DEMO BAD PATTERN: destructive admin operation accessible without authentication.
+func (r *PostgresRepo) Reset(ctx context.Context) error {
+	for _, stmt := range []string{
+		"DELETE FROM order_items",
+		"DELETE FROM orders",
+		"DELETE FROM cart_items",
+		"DELETE FROM products",
+	} {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("repository: reset failed: error executing %q: %w", stmt, err)
+		}
+	}
+	return nil
 }
