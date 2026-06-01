@@ -51,7 +51,7 @@ func (h *Handler) handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	product, err := h.svc.GetProduct(r.Context(), id)
 	if err != nil {
-		h.writeError(w, fmt.Errorf("GET /products/%s: %w", id, err))
+		h.writeError(w, fmt.Errorf("handler: GET /products/{id} failed: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusOK, product)
@@ -76,7 +76,7 @@ func (h *Handler) handleAddCartItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.AddProductToCart(r.Context(), req.ProductID, req.Quantity); err != nil {
-		h.writeError(w, fmt.Errorf("POST /cart/items: %w", err))
+		h.writeError(w, fmt.Errorf("handler: POST /cart/items failed: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"status": "added"})
@@ -88,7 +88,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out, err := h.svc.Checkout(ctx)
 	if err != nil {
-		h.writeError(w, fmt.Errorf("POST /checkout: %w", err))
+		h.writeError(w, fmt.Errorf("handler: POST /checkout failed: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -106,7 +106,7 @@ func (h *Handler) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	order, err := h.svc.GetOrder(r.Context(), id)
 	if err != nil {
-		h.writeError(w, fmt.Errorf("GET /orders/%s: %w", id, err))
+		h.writeError(w, fmt.Errorf("handler: GET /orders/{id} failed: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusOK, order)
@@ -115,7 +115,7 @@ func (h *Handler) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 // handleDemoReset handles POST /demo/reset — truncates all tables directly via the repository.
 func (h *Handler) handleDemoReset(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Reset(r.Context()); err != nil {
-		h.writeError(w, fmt.Errorf("POST /demo/reset: %w", err))
+		h.writeError(w, fmt.Errorf("handler: POST /demo/reset failed: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reset"})
@@ -125,7 +125,7 @@ func (h *Handler) handleDemoReset(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleDemoSeed(w http.ResponseWriter, r *http.Request) {
 	product, err := h.svc.CreateProduct(r.Context(), "Demo Widget", 2999, 50)
 	if err != nil {
-		h.writeError(w, fmt.Errorf("POST /demo/seed: %w", err))
+		h.writeError(w, fmt.Errorf("handler: POST /demo/seed failed: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, product)

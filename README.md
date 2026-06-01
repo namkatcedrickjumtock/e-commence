@@ -65,7 +65,12 @@ curl localhost:8080/orders/o_ghost | jq .
 }
 ```
 
-Point to make: four layers, one missing row, zero useful signal.
+**Talking points:**
+- Count the prefixes: `handler →  service layer → order lookup → repository → database` — five clauses for one missing row.
+- None of these prefixes tell the caller anything they couldn't figure out from the route and the root cause.
+- The raw SQL error `sql: no rows in result set` reached an HTTP client. This is an internal detail that belongs at the database layer.
+- Adding context is good; adding *every layer's name* is noise. The goal is signal, not a stack trace in a string.
+- Ask the audience: *if this error shows up in a log aggregator at 3am, does the on-call engineer know what to do?*
 
 ---
 
@@ -85,8 +90,12 @@ curl localhost:8080/products/p_ghost | jq .
 }
 ```
 
-Point to make: `sql: no rows in result set` reached the HTTP client.
-Open `services/services.go` and show the `import "database/sql"` line.
+**Talking points:**
+- Open `services/services.go` and point to the imports: `database/sql` and `github.com/lib/pq` are infrastructure packages inside the business layer.
+- The service calls `errors.Is(err, sql.ErrNoRows)` — it is making a decision based on a database concept. If you swap Postgres for MongoDB tomorrow, this code breaks.
+- The error message itself contains `sql: no rows in result set` — a database driver string — verbatim in the HTTP response. The client now knows your storage technology.
+- This is abstraction leakage: the contract of the persistence layer has leaked through the service layer all the way to the HTTP response.
+- The fix is to translate at the boundary: `Get` should return `ErrProductNotFound`, and no layer above should ever import `database/sql`.
 
 ---
 
@@ -111,8 +120,13 @@ HTTP/1.1 503 Service Unavailable
 }
 ```
 
-Point to make: the product just doesn't exist — this should be 404.
-The meaning changed twice before reaching the client, and the wrong status was returned.
+**Talking points:**
+- The root cause is identical to Scenario 2: `p_ghost` doesn't exist, so `repo.Get` returns `sql.ErrNoRows`.
+- But `AddProductToCart` reinterprets that as `"stock data unavailable"` — changing the *meaning* of the error.
+- `writeError` checks `"unavailable"` before `"no rows"`, so this returns **503 Service Unavailable** instead of 404 Not Found.
+- The client's retry logic will now hammer the server on a permanently missing product — exactly the wrong behavior.
+- Point to `writeError` in `api/http.go`: the switch is order-dependent. Swapping two cases changes which HTTP status the whole system returns. That is fragile architecture encoded in string matching.
+- The root fix: return a typed sentinel (`ErrProductNotFound`) from the repo, check it with `errors.Is`, and never relabel errors across layers.
 
 ---
 
@@ -143,26 +157,19 @@ curl -X POST localhost:8080/checkout | jq .
 }
 ```
 
-Point to make: internal topology, transaction reference, issuer codes, and retry policy
-all reached the API client. The payment layer has no error boundary.
+**Talking points:**
+- The response body contains `FW-9082`, `region=eu-west`, `tx_ref=FW-TXN-84712947`, `issuer_code=05`, `network=VISA_EU` — all internal fields of `FlutterwaveError`.
+- This is your provider's internal topology and transaction references, live in an API response to an end user.
+- Security risk: leaking provider codes, regions, and network names is useful information for attackers probing your payment stack.
+- Portability risk: if you switch from Flutterwave to Stripe, every client parsing these codes breaks silently.
+- The fix: define a `PaymentError` type at the service boundary — `{Code: "payment_declined", Retryable: false}` — and translate there. The provider is an implementation detail.
+- Notice there is no `errors.Is` check for payment errors anywhere — the only reason the `writeError` switch catches this is the `FW-` string prefix. Rename the code format and 402 silently breaks.
 
 ```bash
 # Reset payment mode when done
 curl -X POST localhost:8080/demo/payment-mode \
   -H "Content-Type: application/json" \
   -d '{"mode":"ok"}'
-```
-
----
-
-## Makefile targets
-
-```bash
-make scenario-1     # excessive wrapping
-make scenario-2     # abstraction leakage
-make scenario-3     # meaning reinterpreted (shows wrong HTTP status)
-make scenario-4     # provider error leakage
-make scenario-all   # all four in sequence
 ```
 
 ---
@@ -181,13 +188,9 @@ make scenario-all   # all four in sequence
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/products` | List all products |
-| `POST` | `/products` | Create a product |
 | `GET` | `/products/{id}` | Get product by ID |
-| `GET` | `/products/{id}/inventory` | Check product stock |
 | `POST` | `/cart/items` | Add product to cart |
 | `POST` | `/checkout` | Checkout cart |
-| `GET` | `/orders` | List all orders |
 | `GET` | `/orders/{id}` | Get order by ID |
 
 ---

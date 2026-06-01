@@ -63,7 +63,7 @@ func (s *service) CreateProduct(ctx context.Context, name string, priceCents int
 	existing, err := s.repo.GetByName(ctx, name)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("duplicate name check failed: %w", err)
+			return nil, fmt.Errorf("service layer: failed to create product: duplicate name check failed: %w", err)
 		}
 	}
 	if existing != nil && existing.Name != "" {
@@ -72,12 +72,12 @@ func (s *service) CreateProduct(ctx context.Context, name string, priceCents int
 
 	p := persistence.Product{Name: name, PriceCents: priceCents, Stock: stock}
 	if err := s.repo.Create(ctx, p); err != nil {
-		return nil, fmt.Errorf("product write failed: %w", err)
+		return nil, fmt.Errorf("service layer: failed to create product: repository write failed: %w", err)
 	}
 
 	created, err := s.repo.GetByName(ctx, name)
 	if err != nil {
-		return nil, fmt.Errorf("post-create lookup failed: %w", err)
+		return nil, fmt.Errorf("service layer: failed to create product: post-create lookup failed: %w", err)
 	}
 	return created, nil
 }
@@ -88,10 +88,12 @@ func (s *service) GetProduct(ctx context.Context, id string) (*persistence.Produ
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf(
-				"product not found: no rows in result set: %w", err,
+				"service: product not found in database catalog: sql query returned no rows: %w", err,
 			)
 		}
-		return nil, fmt.Errorf("product fetch failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: failed to retrieve product: product fetch failed: %w", err,
+		)
 	}
 	return product, nil
 }
@@ -108,9 +110,12 @@ func (s *service) AddProductToCart(ctx context.Context, productID string, quanti
 		// Scenario 3: "product not found" is relabeled "stock data unavailable" —
 		// the caller receives the wrong meaning and writeError maps it to 503.
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("stock data unavailable: %w", err)
+			return fmt.Errorf(
+				"service: cart operation failed: inventory check failed: stock data unavailable: %w",
+				err,
+			)
 		}
-		return fmt.Errorf("product lookup failed: %w", err)
+		return fmt.Errorf("service: cart operation failed: failed to retrieve product data: %w", err)
 	}
 
 	if product.Stock < quantity {
@@ -118,16 +123,19 @@ func (s *service) AddProductToCart(ctx context.Context, productID string, quanti
 	}
 
 	if err := s.repo.Reserve(ctx, productID, quantity); err != nil {
-		return fmt.Errorf("inventory reservation failed: %w", err)
+		return fmt.Errorf("service: cart operation failed: inventory reservation failed: %w", err)
 	}
 
 	if err := s.repo.AddItem(ctx, persistence.CartItem{ProductID: productID, Quantity: quantity}); err != nil {
 		// Scenario 2: unwrapping a postgres-specific error type in the service layer.
 		var pgErr *pq.Error
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return fmt.Errorf("duplicate cart entry: %w", err)
+			return fmt.Errorf(
+				"service: cart operation failed: database rejected duplicate cart entry: postgres unique violation on cart_items_pkey: %w",
+				err,
+			)
 		}
-		return fmt.Errorf("persist cart item failed: %w", err)
+		return fmt.Errorf("service: cart operation failed: failed to persist cart item: %w", err)
 	}
 	return nil
 }
@@ -137,9 +145,13 @@ func (s *service) Checkout(ctx context.Context) (*CheckoutOutput, error) {
 	items, err := s.repo.Items(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("cart items query failed: %w", err)
+			return nil, fmt.Errorf(
+				"service: checkout failed: cart query returned no rows from database: %w", err,
+			)
 		}
-		return nil, fmt.Errorf("cart retrieval failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: checkout failed: cart retrieval error: %w", err,
+		)
 	}
 	if len(items) == 0 {
 		return nil, ErrCartEmpty
@@ -147,22 +159,30 @@ func (s *service) Checkout(ctx context.Context) (*CheckoutOutput, error) {
 
 	total, err := s.totalForItems(ctx, items)
 	if err != nil {
-		return nil, fmt.Errorf("price calculation failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: checkout failed: price calculation failed: %w", err,
+		)
 	}
 
 	// Scenario 4: FlutterwaveError passes through with no translation —
 	// internal fields (Code, Region, TxRef) will appear in the HTTP response.
 	if err := s.payments.Charge(ctx, total); err != nil {
-		return nil, fmt.Errorf("payment processing failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: payment processing failed: %w", err,
+		)
 	}
 
 	order, err := s.repo.CreateOrder(ctx, persistence.Order{TotalCents: total, Items: items})
 	if err != nil {
-		return nil, fmt.Errorf("order creation failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: checkout failed: order creation failed: %w", err,
+		)
 	}
 
 	if err := s.repo.Clear(ctx); err != nil {
-		return nil, fmt.Errorf("cart cleanup failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: checkout failed: cart cleanup failed: %w", err,
+		)
 	}
 
 	return &CheckoutOutput{OrderID: order.ID, TotalCents: order.TotalCents}, nil
@@ -172,7 +192,9 @@ func (s *service) Checkout(ctx context.Context) (*CheckoutOutput, error) {
 func (s *service) GetOrder(ctx context.Context, id string) (*persistence.Order, error) {
 	order, err := s.repo.GetOrder(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("order lookup failed: %w", err)
+		return nil, fmt.Errorf(
+			"service layer: failed to retrieve order details: order lookup failed: %w", err,
+		)
 	}
 	return order, nil
 }
@@ -182,7 +204,10 @@ func (s *service) totalForItems(ctx context.Context, items []persistence.CartIte
 	for _, it := range items {
 		p, err := s.repo.Get(ctx, it.ProductID)
 		if err != nil {
-			return 0, fmt.Errorf("pricing failed for item %s: %w", it.ProductID, err)
+			return 0, fmt.Errorf(
+				"service: price calculation failed: failed to fetch pricing data for item %s: %w",
+				it.ProductID, err,
+			)
 		}
 		total += p.PriceCents * it.Quantity
 	}
