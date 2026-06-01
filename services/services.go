@@ -2,17 +2,27 @@ package services
 
 import (
 	"context"
-	// Scenario 2: business layer importing infrastructure packages directly.
 	"database/sql"
 	"errors"
 	"fmt"
-
-	// Scenario 2: postgres-specific package visible in business logic.
 	"github.com/lib/pq"
 
 	"github.com/namkatcedrickjumtock/e-commence/persistence"
 )
 
+// DEMO BAD PATTERNS in this file:
+//  1. Imports "database/sql" and "github.com/lib/pq" — the business layer is
+//     directly coupled to persistence infrastructure.
+//
+//  2. Calls errors.Is(err, sql.ErrNoRows) and errors.As(err, &pgErr) throughout —
+//     business logic branches on database-level error types it should never see.
+//
+//  3. Semantic reinterpretation: AddProductToCart receives "product not found"
+//     (sql.ErrNoRows) and re-labels it "inventory check failed: stock data
+//     unavailable", changing the meaning and causing the wrong HTTP status.
+//
+//  4. Every error path adds another fmt.Errorf wrap, duplicating context
+//     already present in the underlying message.
 type CheckoutOutput struct {
 	OrderID    string `json:"order_id"`
 	TotalCents int    `json:"total_cents"`
@@ -35,6 +45,7 @@ func NewService(repo *persistence.PostgresRepo, payments *persistence.Flutterwav
 	return &service{repo: repo, payments: payments}
 }
 
+// CreateProduct validates input, checks for a duplicate name, and writes the new product to the database.
 func (s *service) CreateProduct(ctx context.Context, name string, priceCents int, stock int) (persistence.Product, error) {
 	if name == "" {
 		return persistence.Product{}, fmt.Errorf("%w: product name is required", ErrInvalidInput)
@@ -68,6 +79,7 @@ func (s *service) CreateProduct(ctx context.Context, name string, priceCents int
 	return created, nil
 }
 
+// GetProduct retrieves a single product by ID and surfaces a not-found error to the caller.
 func (s *service) GetProduct(ctx context.Context, id string) (persistence.Product, error) {
 	product, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -83,6 +95,7 @@ func (s *service) GetProduct(ctx context.Context, id string) (persistence.Produc
 	return product, nil
 }
 
+// AddProductToCart checks available stock, reserves inventory, and persists the item to the cart.
 func (s *service) AddProductToCart(ctx context.Context, productID string, quantity int) error {
 	if quantity <= 0 {
 		return ErrInvalidQuantity
@@ -124,6 +137,7 @@ func (s *service) AddProductToCart(ctx context.Context, productID string, quanti
 	return nil
 }
 
+// Checkout calculates the cart total, charges payment, persists the order, and clears the cart.
 func (s *service) Checkout(ctx context.Context) (CheckoutOutput, error) {
 	items, err := s.repo.Items(ctx)
 	if err != nil {
@@ -171,6 +185,7 @@ func (s *service) Checkout(ctx context.Context) (CheckoutOutput, error) {
 	return CheckoutOutput{OrderID: order.ID, TotalCents: order.TotalCents}, nil
 }
 
+// GetOrder retrieves an order and its line items by ID.
 func (s *service) GetOrder(ctx context.Context, id string) (persistence.Order, error) {
 	order, err := s.repo.GetOrder(ctx, id)
 	if err != nil {

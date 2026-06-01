@@ -42,6 +42,7 @@ func (h *Handler) Routes() http.Handler {
 	return h.withLogging(mux)
 }
 
+// handleGetProduct handles GET /products/{id} — validates the ID prefix and returns the product.
 func (h *Handler) handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !strings.HasPrefix(id, "p_") {
@@ -56,6 +57,7 @@ func (h *Handler) handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, product)
 }
 
+// handleAddCartItem handles POST /cart/items — decodes the request and delegates to svc.AddProductToCart.
 func (h *Handler) handleAddCartItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProductID string `json:"product_id"`
@@ -80,6 +82,7 @@ func (h *Handler) handleAddCartItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"status": "added"})
 }
 
+// handleCheckout handles POST /checkout — runs with a 400ms timeout and delegates to svc.Checkout.
 func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 400*time.Millisecond)
 	defer cancel()
@@ -94,6 +97,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetOrder handles GET /orders/{id} — validates the ID prefix and returns the order with its items.
 func (h *Handler) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !strings.HasPrefix(id, "o_") {
@@ -108,6 +112,7 @@ func (h *Handler) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, order)
 }
 
+// handleDemoReset handles POST /demo/reset — truncates all tables directly via the repository.
 func (h *Handler) handleDemoReset(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Reset(r.Context()); err != nil {
 		h.writeError(w, fmt.Errorf("handler: POST /demo/reset failed: %w", err))
@@ -116,6 +121,7 @@ func (h *Handler) handleDemoReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reset"})
 }
 
+// handleDemoSeed handles POST /demo/seed — creates a canonical "Demo Widget" product via the service.
 func (h *Handler) handleDemoSeed(w http.ResponseWriter, r *http.Request) {
 	product, err := h.svc.CreateProduct(r.Context(), "Demo Widget", 2999, 50)
 	if err != nil {
@@ -125,6 +131,7 @@ func (h *Handler) handleDemoSeed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, product)
 }
 
+// handleSetPaymentMode handles POST /demo/payment-mode — switches the Flutterwave failure mode at runtime.
 func (h *Handler) handleSetPaymentMode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Mode string `json:"mode"`

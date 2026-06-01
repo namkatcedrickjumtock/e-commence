@@ -17,6 +17,7 @@ func NewPostgresRepo(db *sql.DB) *PostgresRepo {
 	return &PostgresRepo{db: db, q: sqlc.New(db)}
 }
 
+// Get fetches a single product row from the products table by ID.
 func (r *PostgresRepo) Get(ctx context.Context, id string) (Product, error) {
 	p, err := r.q.GetProduct(ctx, id)
 	if err != nil {
@@ -31,6 +32,7 @@ func (r *PostgresRepo) Get(ctx context.Context, id string) (Product, error) {
 	}, nil
 }
 
+// GetByName fetches a product row by name using a raw query — used to check for duplicates.
 func (r *PostgresRepo) GetByName(ctx context.Context, name string) (Product, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, name, price_cents, stock FROM products WHERE name = $1`, name)
@@ -47,6 +49,7 @@ func (r *PostgresRepo) GetByName(ctx context.Context, name string) (Product, err
 	}, nil
 }
 
+// Create inserts a new product row into the products table.
 func (r *PostgresRepo) Create(ctx context.Context, product Product) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO products (id, name, price_cents, stock) VALUES ($1, $2, $3, $4)`,
@@ -57,6 +60,7 @@ func (r *PostgresRepo) Create(ctx context.Context, product Product) error {
 	return nil
 }
 
+// Reserve decrements the stock of a product by the given quantity.
 func (r *PostgresRepo) Reserve(ctx context.Context, productID string, quantity int) error {
 	err := r.q.ReserveStock(ctx, sqlc.ReserveStockParams{
 		ID:    productID,
@@ -68,6 +72,7 @@ func (r *PostgresRepo) Reserve(ctx context.Context, productID string, quantity i
 	return nil
 }
 
+// AddItem inserts a cart item row linking a product ID and quantity.
 func (r *PostgresRepo) AddItem(ctx context.Context, item CartItem) error {
 	err := r.q.InsertCartItem(ctx, sqlc.InsertCartItemParams{
 		ProductID: item.ProductID,
@@ -79,6 +84,7 @@ func (r *PostgresRepo) AddItem(ctx context.Context, item CartItem) error {
 	return nil
 }
 
+// Items returns all rows from the cart_items table.
 func (r *PostgresRepo) Items(ctx context.Context) ([]CartItem, error) {
 	rows, err := r.q.ListCartItems(ctx)
 	if err != nil {
@@ -94,6 +100,7 @@ func (r *PostgresRepo) Items(ctx context.Context) ([]CartItem, error) {
 	return items, nil
 }
 
+// Clear deletes all rows from the cart_items table.
 func (r *PostgresRepo) Clear(ctx context.Context) error {
 	if err := r.q.ClearCart(ctx); err != nil {
 		return fmt.Errorf("repository: ClearCart delete failed: database write error: %w", err)
@@ -101,6 +108,7 @@ func (r *PostgresRepo) Clear(ctx context.Context) error {
 	return nil
 }
 
+// CreateOrder inserts an order header row and all its line items in sequence.
 func (r *PostgresRepo) CreateOrder(ctx context.Context, order Order) (Order, error) {
 	if err := r.q.CreateOrder(ctx, sqlc.CreateOrderParams{
 		ID:         order.ID,
@@ -126,6 +134,7 @@ func (r *PostgresRepo) CreateOrder(ctx context.Context, order Order) (Order, err
 	return order, nil
 }
 
+// GetOrder fetches an order by ID, then loads its line items in a second query.
 func (r *PostgresRepo) GetOrder(ctx context.Context, id string) (Order, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, total_cents FROM orders WHERE id = $1`, id)
@@ -170,6 +179,7 @@ func (r *PostgresRepo) orderItems(ctx context.Context, orderID string) ([]CartIt
 	return items, rows.Err()
 }
 
+// Reset truncates all tables in dependency order — used by the demo reset endpoint.
 func (r *PostgresRepo) Reset(ctx context.Context) error {
 	for _, stmt := range []string{
 		"DELETE FROM order_items",
