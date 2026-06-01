@@ -20,6 +20,7 @@ func NewPostgresRepo(db *sql.DB) *PostgresRepo {
 func (r *PostgresRepo) Get(ctx context.Context, id string) (Product, error) {
 	p, err := r.q.GetProduct(ctx, id)
 	if err != nil {
+		// Scenario 1: wraps without translating — sql.ErrNoRows propagates to every caller.
 		return Product{}, fmt.Errorf("repository: GetProduct query failed: database error: %w", err)
 	}
 	return Product{
@@ -131,6 +132,7 @@ func (r *PostgresRepo) GetOrder(ctx context.Context, id string) (Order, error) {
 
 	var o sqlc.Order
 	if err := row.Scan(&o.ID, &o.TotalCents); err != nil {
+		// Scenario 1: three prefixes for one lookup — the chain starts here and grows at each layer.
 		return Order{}, fmt.Errorf(
 			"repository: GetOrder query failed: order record not found in database: %w",
 			err,

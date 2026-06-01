@@ -137,6 +137,8 @@ func (h *Handler) handleSetPaymentMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"payment_mode": req.Mode})
 }
 
+// Scenario 1: the full error chain from every layer is dumped verbatim into the response body.
+// Scenarios 3 + 4: status codes are derived by string matching — order-dependent and fragile.
 func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	errMsg := err.Error()
 	status := http.StatusInternalServerError
@@ -148,10 +150,13 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, ErrInvalidOrderID):
 		status = http.StatusBadRequest
 
+	// Scenario 3: "unavailable" is matched before "no rows" —
+	// a product-not-found reinterpreted by the service layer returns 503 instead of 404.
 	case strings.Contains(errMsg, "unavailable") ||
 		strings.Contains(errMsg, "timeout"):
 		status = http.StatusServiceUnavailable
 
+	// Scenario 4: payment provider codes surface here because FlutterwaveError was never translated.
 	case strings.Contains(errMsg, "FW-") ||
 		strings.Contains(errMsg, "declined"):
 		status = http.StatusPaymentRequired

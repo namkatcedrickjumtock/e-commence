@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	// Scenario 2: business layer importing infrastructure packages directly.
 	"database/sql"
 	"errors"
 	"fmt"
 
+	// Scenario 2: postgres-specific package visible in business logic.
 	"github.com/lib/pq"
 
 	"github.com/namkatcedrickjumtock/e-commence/persistence"
@@ -88,6 +90,9 @@ func (s *service) AddProductToCart(ctx context.Context, productID string, quanti
 
 	product, err := s.repo.Get(ctx, productID)
 	if err != nil {
+		// Scenario 2: inspecting a database-level error type inside business logic.
+		// Scenario 3: "product not found" is relabeled "stock data unavailable" —
+		// the caller receives the wrong meaning and writeError maps it to 503.
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf(
 				"service: cart operation failed: inventory check failed: stock data unavailable: %w",
@@ -106,6 +111,7 @@ func (s *service) AddProductToCart(ctx context.Context, productID string, quanti
 	}
 
 	if err := s.repo.AddItem(ctx, persistence.CartItem{ProductID: productID, Quantity: quantity}); err != nil {
+		// Scenario 2: unwrapping a postgres-specific error type in the service layer.
 		var pgErr *pq.Error
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return fmt.Errorf(
@@ -141,6 +147,8 @@ func (s *service) Checkout(ctx context.Context) (CheckoutOutput, error) {
 		)
 	}
 
+	// Scenario 4: FlutterwaveError passes through with no translation —
+	// internal fields (Code, Region, TxRef) will appear in the HTTP response.
 	if err := s.payments.Charge(ctx, total); err != nil {
 		return CheckoutOutput{}, fmt.Errorf(
 			"service layer: payment processing failed: %w", err,
