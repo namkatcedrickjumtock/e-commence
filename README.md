@@ -44,9 +44,12 @@ The server listens on `:8080`.
 ### Setup (run once before any scenario)
 
 ```bash
-curl -X POST localhost:8080/demo/reset
-curl -X POST localhost:8080/demo/seed
+curl -s -X POST localhost:8080/demo/reset | jq .
+curl -s -X POST localhost:8080/demo/seed | jq .
 ```
+
+`/demo/seed` inserts three products: **GopherCon T-Shirt** ($24.99), **Go Programming Book** ($39.99), **Gopher Plush Toy** ($14.99).
+Copy one of the returned `id` values — you'll need it for Scenarios 3 and 4.
 
 ---
 
@@ -136,18 +139,21 @@ Raw `FlutterwaveError` fields — internal code, region, transaction ref, retrya
 reach the HTTP response body with no abstraction.
 
 ```bash
-# Step 1 — set payment mode (no server restart needed)
-curl -X POST localhost:8080/demo/payment-mode \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"card_declined"}'
+# Step 1 — list products to pick an ID
+curl -s localhost:8080/products | jq .
 
-# Step 2 — add a product to cart (use the ID returned by /demo/seed)
-curl -X POST localhost:8080/cart/items \
+# Step 2 — add a product to cart
+curl -s -X POST localhost:8080/cart/items \
   -H "Content-Type: application/json" \
-  -d '{"product_id":"<id>","quantity":1}'
+  -d '{"product_id":"<id from step 1>","quantity":1}' | jq .
 
-# Step 3 — checkout
-curl -X POST localhost:8080/checkout | jq .
+# Step 3 — set payment mode to card declined (no server restart needed)
+curl -s -X POST localhost:8080/demo/payment-mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"card_declined"}' | jq .
+
+# Step 4 — checkout and watch the provider internals leak
+curl -s -X POST localhost:8080/checkout | jq .
 ```
 
 **Expected response:**
@@ -167,9 +173,9 @@ curl -X POST localhost:8080/checkout | jq .
 
 ```bash
 # Reset payment mode when done
-curl -X POST localhost:8080/demo/payment-mode \
+curl -s -X POST localhost:8080/demo/payment-mode \
   -H "Content-Type: application/json" \
-  -d '{"mode":"ok"}'
+  -d '{"mode":"ok"}' | jq .
 ```
 
 ---
@@ -188,6 +194,7 @@ curl -X POST localhost:8080/demo/payment-mode \
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/products` | List all products |
 | `GET` | `/products/{id}` | Get product by ID |
 | `POST` | `/cart/items` | Add product to cart |
 | `POST` | `/checkout` | Checkout cart |

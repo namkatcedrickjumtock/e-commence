@@ -32,6 +32,7 @@ func NewHandler(
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /products", h.handleListProducts)
 	mux.HandleFunc("GET /products/{id}", h.handleGetProduct)
 	mux.HandleFunc("POST /cart/items", h.handleAddCartItem)
 	mux.HandleFunc("POST /checkout", h.handleCheckout)
@@ -40,6 +41,16 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /demo/seed", h.handleDemoSeed)
 	mux.HandleFunc("POST /demo/payment-mode", h.handleSetPaymentMode)
 	return h.withLogging(mux)
+}
+
+// handleListProducts handles GET /products — returns all products in the catalog.
+func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
+	products, err := h.svc.ListProducts(r.Context())
+	if err != nil {
+		h.writeError(w, fmt.Errorf("handler: GET /products failed: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, products)
 }
 
 // handleGetProduct handles GET /products/{id} — validates the ID prefix and returns the product.
@@ -121,14 +132,28 @@ func (h *Handler) handleDemoReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reset"})
 }
 
-// handleDemoSeed handles POST /demo/seed — creates a canonical "Demo Widget" product via the service.
+// handleDemoSeed handles POST /demo/seed — creates three GopherCon products and returns them.
 func (h *Handler) handleDemoSeed(w http.ResponseWriter, r *http.Request) {
-	product, err := h.svc.CreateProduct(r.Context(), "Demo Widget", 2999, 50)
-	if err != nil {
-		h.writeError(w, fmt.Errorf("handler: POST /demo/seed failed: %w", err))
-		return
+	seeds := []struct {
+		name       string
+		priceCents int
+		stock      int
+	}{
+		{"GopherCon T-Shirt", 2499, 100},
+		{"Go Programming Book", 3999, 50},
+		{"Gopher Plush Toy", 1499, 200},
 	}
-	writeJSON(w, http.StatusCreated, product)
+
+	var products []*persistence.Product
+	for _, s := range seeds {
+		p, err := h.svc.CreateProduct(r.Context(), s.name, s.priceCents, s.stock)
+		if err != nil {
+			h.writeError(w, fmt.Errorf("handler: POST /demo/seed failed: %w", err))
+			return
+		}
+		products = append(products, p)
+	}
+	writeJSON(w, http.StatusCreated, products)
 }
 
 // handleSetPaymentMode handles POST /demo/payment-mode — switches the Flutterwave failure mode at runtime.

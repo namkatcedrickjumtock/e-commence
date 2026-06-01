@@ -49,6 +49,34 @@ func (r *PostgresRepo) GetByName(ctx context.Context, name string) (*Product, er
 	}, nil
 }
 
+// List returns all product rows from the products table ordered by ID.
+func (r *PostgresRepo) List(ctx context.Context) ([]Product, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, name, price_cents, stock FROM products ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("repository: List query failed: database read error: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Product
+	for rows.Next() {
+		var p sqlc.Product
+		if err := rows.Scan(&p.ID, &p.Name, &p.PriceCents, &p.Stock); err != nil {
+			return nil, fmt.Errorf("repository: List scan failed: database row scan error: %w", err)
+		}
+		out = append(out, Product{
+			ID:         p.ID,
+			Name:       p.Name,
+			PriceCents: int(p.PriceCents),
+			Stock:      int(p.Stock),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repository: List iteration failed: database cursor error: %w", err)
+	}
+	return out, nil
+}
+
 // Create inserts a new product row into the products table.
 func (r *PostgresRepo) Create(ctx context.Context, product Product) error {
 	_, err := r.db.ExecContext(ctx,

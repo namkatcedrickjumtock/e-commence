@@ -34,6 +34,7 @@ type CheckoutOutput struct {
 type Service interface {
 	CreateProduct(ctx context.Context, name string, priceCents int, stock int) (*persistence.Product, error)
 	GetProduct(ctx context.Context, id string) (*persistence.Product, error)
+	ListProducts(ctx context.Context) ([]persistence.Product, error)
 	AddProductToCart(ctx context.Context, productID string, quantity int) error
 	Checkout(ctx context.Context) (*CheckoutOutput, error)
 	GetOrder(ctx context.Context, id string) (*persistence.Order, error)
@@ -96,6 +97,15 @@ func (s *service) GetProduct(ctx context.Context, id string) (*persistence.Produ
 		)
 	}
 	return product, nil
+}
+
+// ListProducts returns all products in the catalog.
+func (s *service) ListProducts(ctx context.Context) ([]persistence.Product, error) {
+	products, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("service layer: failed to list products: repository read failed: %w", err)
+	}
+	return products, nil
 }
 
 // AddProductToCart checks available stock, reserves inventory, and persists the item to the cart.
