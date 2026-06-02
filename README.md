@@ -4,7 +4,7 @@
 **Branch:** `v0.1` — Demo Part 1: The Bad Version
 
 > This branch intentionally demonstrates poor error handling patterns in a layered architecture.
-> Demo Part 2 (the structured version) lives on `main`.
+> Demo Part 2 (the structured version) lives on `v0.2`.
 
 ## Layers
 
