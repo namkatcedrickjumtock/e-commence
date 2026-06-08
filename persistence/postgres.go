@@ -77,8 +77,11 @@ func (r *PostgresRepo) List(ctx context.Context) ([]Product, error) {
 	return out, nil
 }
 
-// Create inserts a new product row into the products table.
+// Create inserts a new product row into the products table, generating an ID if one is not set.
 func (r *PostgresRepo) Create(ctx context.Context, product Product) error {
+	if product.ID == "" {
+		product.ID = newProductID()
+	}
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO products (id, name, price_cents, stock) VALUES ($1, $2, $3, $4)`,
 		product.ID, product.Name, product.PriceCents, product.Stock)
@@ -138,6 +141,9 @@ func (r *PostgresRepo) Clear(ctx context.Context) error {
 
 // CreateOrder inserts an order header row and all its line items in sequence.
 func (r *PostgresRepo) CreateOrder(ctx context.Context, order Order) (*Order, error) {
+	if order.ID == "" {
+		order.ID = newOrderID()
+	}
 	if err := r.q.CreateOrder(ctx, sqlc.CreateOrderParams{
 		ID:         order.ID,
 		TotalCents: int32(order.TotalCents),

@@ -78,7 +78,7 @@ func run() error {
 	logger.Println("connected to postgres")
 
 	repo := persistence.NewPostgresRepo(sqlDB)
-	payments := persistence.NewFlutterwaveProvider(persistence.ParsePaymentMode(cfg.Payment.Mode))
+	payments := persistence.NewStripeProvider(persistence.ParsePaymentMode(cfg.Payment.Mode))
 	svc := services.NewService(repo, payments)
 
 	// DEMO BAD PATTERN: handler receives direct references to infrastructure

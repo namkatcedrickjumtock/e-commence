@@ -42,10 +42,10 @@ type Service interface {
 
 type service struct {
 	repo     *persistence.PostgresRepo
-	payments *persistence.FlutterwaveProvider
+	payments *persistence.StripeProvider
 }
 
-func NewService(repo *persistence.PostgresRepo, payments *persistence.FlutterwaveProvider) Service {
+func NewService(repo *persistence.PostgresRepo, payments *persistence.StripeProvider) Service {
 	return &service{repo: repo, payments: payments}
 }
 

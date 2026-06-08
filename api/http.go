@@ -17,14 +17,14 @@ import (
 type Handler struct {
 	svc      services.Service
 	logger   *log.Logger
-	payments *persistence.FlutterwaveProvider
+	payments *persistence.StripeProvider
 	repo     *persistence.PostgresRepo
 }
 
 func NewHandler(
 	svc services.Service,
 	logger *log.Logger,
-	payments *persistence.FlutterwaveProvider,
+	payments *persistence.StripeProvider,
 	repo *persistence.PostgresRepo,
 ) *Handler {
 	return &Handler{svc: svc, logger: logger, payments: payments, repo: repo}
@@ -188,9 +188,9 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 		strings.Contains(errMsg, "timeout"):
 		status = http.StatusServiceUnavailable
 
-	// Scenario 4: payment provider codes surface here because FlutterwaveError was never translated.
-	case strings.Contains(errMsg, "FW-") ||
-		strings.Contains(errMsg, "declined"):
+	// Scenario 4: payment provider codes surface here because StripeError was never translated.
+	case strings.Contains(errMsg, "stripe") ||
+		strings.Contains(errMsg, "card_declined"):
 		status = http.StatusPaymentRequired
 
 	case strings.Contains(errMsg, "no rows") ||
