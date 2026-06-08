@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/namkatcedrickjumtock/e-commence/persistence/sqlc"
@@ -21,8 +22,10 @@ func NewPostgresRepo(db *sql.DB) *PostgresRepo {
 func (r *PostgresRepo) Get(ctx context.Context, id string) (*Product, error) {
 	p, err := r.q.GetProduct(ctx, id)
 	if err != nil {
-		// Scenario 1: wraps without translating — sql.ErrNoRows propagates to every caller.
-		return nil, fmt.Errorf("repository: GetProduct query failed: database error: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrProductNotFound
+		}
+		return nil, ErrDatabaseUnavailable
 	}
 	return &Product{
 		ID:         p.ID,
@@ -77,8 +80,11 @@ func (r *PostgresRepo) List(ctx context.Context) ([]Product, error) {
 	return out, nil
 }
 
-// Create inserts a new product row into the products table.
+// Create inserts a new product row into the products table, generating an ID if one is not set.
 func (r *PostgresRepo) Create(ctx context.Context, product Product) error {
+	if product.ID == "" {
+		product.ID = newProductID()
+	}
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO products (id, name, price_cents, stock) VALUES ($1, $2, $3, $4)`,
 		product.ID, product.Name, product.PriceCents, product.Stock)
@@ -138,6 +144,9 @@ func (r *PostgresRepo) Clear(ctx context.Context) error {
 
 // CreateOrder inserts an order header row and all its line items in sequence.
 func (r *PostgresRepo) CreateOrder(ctx context.Context, order Order) (*Order, error) {
+	if order.ID == "" {
+		order.ID = newOrderID()
+	}
 	if err := r.q.CreateOrder(ctx, sqlc.CreateOrderParams{
 		ID:         order.ID,
 		TotalCents: int32(order.TotalCents),
@@ -169,11 +178,10 @@ func (r *PostgresRepo) GetOrder(ctx context.Context, id string) (*Order, error) 
 
 	var o sqlc.Order
 	if err := row.Scan(&o.ID, &o.TotalCents); err != nil {
-		// Scenario 1: three prefixes for one lookup — the chain starts here and grows at each layer.
-		return nil, fmt.Errorf(
-			"repository: GetOrder query failed: order record not found in database: %w",
-			err,
-		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrOrderNotFound
+		}
+		return nil, ErrDatabaseUnavailable
 	}
 
 	items, err := r.orderItems(ctx, id)

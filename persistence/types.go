@@ -1,11 +1,11 @@
 package persistence
 
+import (
+	"crypto/rand"
+	"encoding/hex"
+)
+
 // Domain types owned by the persistence layer.
-// The business layer (services) imports these from here rather than
-// defining its own copies, keeping the dependency graph one-directional:
-//   services → persistence → sqlc
-// This avoids the import cycle that would arise if both layers
-// defined their own versions of the same types.
 
 type Product struct {
 	ID         string `json:"id"`
@@ -23,4 +23,13 @@ type Order struct {
 	ID         string     `json:"id"`
 	TotalCents int        `json:"total_cents"`
 	Items      []CartItem `json:"items"`
+}
+
+func newProductID() string { return "p_" + randomHex() }
+func newOrderID() string   { return "o_" + randomHex() }
+
+func randomHex() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
