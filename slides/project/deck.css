@@ -1,0 +1,218 @@
+/* ============================================================
+   Error Tracing — GopherCon EU 2026
+   Go-brand deck: deep navy + Gopher cyan, Space Grotesk + JetBrains Mono
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  /* type scale (1920x1080) */
+  --type-display: 96px;
+  --type-title:   64px;
+  --type-subtitle:44px;
+  --type-body:    34px;
+  --type-small:   28px;
+  --type-mono:    26px;
+  --type-micro:   22px;
+
+  /* spacing */
+  --pad-top: 96px;
+  --pad-bottom: 84px;
+  --pad-x: 110px;
+  --gap-title: 44px;
+  --gap-item: 26px;
+
+  /* palette — Go brand */
+  --navy-900: #07131c;
+  --navy-800: #0a1822;
+  --navy-700: #0e2230;
+  --navy-600: #143042;
+  --line:     #1d3b4f;
+  --cyan:     #00ADD8;   /* Gopher cyan */
+  --cyan-dim: #1c7e9c;
+  --ink:      #eaf1f5;
+  --muted:    #82a0b0;
+  --faint:    #4f7184;
+  --bad:      oklch(0.66 0.16 28);
+  --bad-bg:   oklch(0.66 0.16 28 / 0.10);
+  --good:     oklch(0.74 0.14 158);
+  --good-bg:  oklch(0.74 0.14 158 / 0.10);
+  --amber:    oklch(0.80 0.12 75);
+}
+
+* { box-sizing: border-box; }
+
+deck-stage:not(:defined) { visibility: hidden; }
+
+html, body { margin: 0; background: #000; }
+
+deck-stage { background: #000; }
+
+section {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  background:
+    radial-gradient(120% 90% at 82% 8%, #0e2536 0%, var(--navy-800) 46%, var(--navy-900) 100%);
+  color: var(--ink);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* layout helpers ------------------------------------------------ */
+.slide {
+  position: absolute;
+  inset: 0;
+  padding: var(--pad-top) var(--pad-x) var(--pad-bottom);
+  display: flex;
+  flex-direction: column;
+}
+.slide.center { justify-content: center; }
+.slide.pad-wide { --pad-x: 140px; }
+
+/* persistent footer / eyebrow ----------------------------------- */
+.eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--type-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.eyebrow .tick { width: 30px; height: 2px; background: var(--cyan); display: inline-block; }
+
+.kicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--type-small);
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+h1, h2, h3 { margin: 0; font-weight: 600; line-height: 1.04; letter-spacing: -0.015em; }
+h1 { font-size: var(--type-display); font-weight: 700; }
+h2 { font-size: var(--type-title); }
+h3 { font-size: var(--type-subtitle); }
+p { margin: 0; line-height: 1.4; }
+
+.title-lg { font-size: var(--type-title); font-weight: 600; line-height: 1.06; }
+.lead { font-size: var(--type-body); color: var(--muted); line-height: 1.42; max-width: 24ch; }
+.cyan { color: var(--cyan); }
+.bad  { color: var(--bad); }
+.good { color: var(--good); }
+.amber{ color: var(--amber); }
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+/* slide number chip (top-right) --------------------------------- */
+.snum {
+  position: absolute;
+  top: var(--pad-top);
+  right: var(--pad-x);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--type-micro);
+  color: var(--faint);
+  letter-spacing: 0.1em;
+}
+
+/* terminal / code card ------------------------------------------ */
+.term {
+  background: #06121a;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  overflow: hidden;
+  box-shadow: 0 30px 80px -40px rgba(0,0,0,0.8);
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px;
+  background: #0a1a25;
+  border-bottom: 1px solid var(--line);
+}
+.term-bar .dot { width: 13px; height: 13px; border-radius: 50%; }
+.dot.r { background: #e0564a; } .dot.y { background: #e0b13a; } .dot.g { background: #3abf6e; }
+.term-bar .tt { margin-left: 12px; font-size: var(--type-micro); color: var(--muted); letter-spacing: 0.04em; }
+.term-body { padding: 30px 34px; font-size: var(--type-mono); line-height: 1.62; }
+.term-body .prompt { color: var(--cyan); }
+.term-body .dim { color: var(--faint); }
+.term-tag {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: var(--type-micro); letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 7px 16px; border-radius: 100px; font-weight: 600;
+}
+.term-tag.bad  { background: var(--bad-bg);  color: var(--bad);  border: 1px solid color-mix(in oklch, var(--bad), transparent 60%); }
+.term-tag.good { background: var(--good-bg); color: var(--good); border: 1px solid color-mix(in oklch, var(--good), transparent 60%); }
+
+/* layer stack diagram ------------------------------------------- */
+.stack { display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.layer {
+  display: flex; align-items: center; gap: 26px;
+  padding: 26px 34px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--navy-700);
+}
+.layer .lname { font-size: var(--type-subtitle); font-weight: 600; }
+.layer .ldesc { font-family: 'JetBrains Mono', monospace; font-size: var(--type-small); color: var(--muted); }
+.layer .ltag {
+  margin-left: auto; font-family: 'JetBrains Mono', monospace;
+  font-size: var(--type-micro); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--cyan); padding: 6px 14px; border: 1px solid var(--cyan-dim); border-radius: 100px;
+}
+.layer.hl { border-color: var(--cyan); box-shadow: inset 0 0 0 1px var(--cyan-dim); }
+
+/* numbered anti-pattern index ----------------------------------- */
+.apgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; width: 100%; }
+.apcard {
+  display: flex; gap: 28px; align-items: flex-start;
+  padding: 34px 36px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--navy-700);
+}
+.apcard .apnum {
+  font-family: 'JetBrains Mono', monospace; font-size: 56px; font-weight: 700;
+  color: var(--cyan); line-height: 1; min-width: 64px;
+}
+.apcard .aptitle { font-size: var(--type-subtitle); font-weight: 600; margin-bottom: 10px; }
+.apcard .apdesc  { font-size: var(--type-small); color: var(--muted); line-height: 1.38; }
+
+/* big divider for anti-pattern sections -------------------------- */
+.divider-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 220px; font-weight: 700; line-height: 0.8;
+  color: transparent; -webkit-text-stroke: 2px var(--cyan-dim);
+}
+
+/* before/after columns ------------------------------------------ */
+.ba { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; width: 100%; align-items: stretch; }
+.ba > div { display: flex; flex-direction: column; gap: 18px; }
+
+/* fix table ----------------------------------------------------- */
+.ftable { width: 100%; border-collapse: collapse; font-size: var(--type-small); }
+.ftable th {
+  text-align: left; font-family: 'JetBrains Mono', monospace; font-weight: 600;
+  font-size: var(--type-micro); letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 0 28px 18px; color: var(--muted);
+}
+.ftable td { padding: 22px 28px; border-top: 1px solid var(--line); vertical-align: top; line-height: 1.34; }
+.ftable td.from { color: var(--muted); }
+.ftable td.to   { color: var(--ink); font-weight: 500; }
+.ftable .arrow { color: var(--cyan); }
+
+/* misc ---------------------------------------------------------- */
+.bullets { display: flex; flex-direction: column; gap: var(--gap-item); }
+.bullets li { list-style: none; display: flex; gap: 22px; align-items: flex-start; font-size: var(--type-body); line-height: 1.34; }
+.bullets li::before { content: ''; width: 13px; height: 13px; margin-top: 16px; background: var(--cyan); flex: none; transform: rotate(45deg); }
+ul { margin: 0; padding: 0; }
+
+.flow-arrow { color: var(--cyan); font-size: 52px; line-height: 1; text-align: center; }
+
+.bignum { font-family: 'JetBrains Mono', monospace; font-size: 160px; font-weight: 700; line-height: 0.86; }
+
+/* entrance animation -------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  [data-deck-active] .anim { animation: rise 0.55s cubic-bezier(0.22,1,0.36,1) both; }
+  [data-deck-active] .anim2 { animation: rise 0.55s 0.10s cubic-bezier(0.22,1,0.36,1) both; }
+  [data-deck-active] .anim3 { animation: rise 0.55s 0.20s cubic-bezier(0.22,1,0.36,1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+}

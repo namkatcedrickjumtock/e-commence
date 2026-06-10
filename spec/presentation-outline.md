@@ -1,6 +1,6 @@
 # Error Tracing: Lessons Learned From the Trenches
 
-## GopherCon Europe 2026 · Berlin
+## Iknite Studio Engineering Retrospective
 
 **Namkat Cedrick · Software Engineer, Iknite Inc**
 
@@ -24,43 +24,71 @@
 
 Good morning, everyone. My name is Namkat Cedrick, I'm a software engineer at Iknite Inc, and it's a real pleasure to be here. Before we begin, I want to thank the organizers for this opportunity and thank all of you for choosing to spend the next half hour in this room.
 
-I'll be honest with you — this is my first time presenting on a stage like this, so bear with me. The title is "Lessons Learned From the Trenches," and I mean the trenches. What I'm going to share today is a story from my own experience: how I didn't treat errors as part of my architecture, how I kept kicking that can down the road, until one day it stopped being my problem alone and became a problem for my whole team.
+I'll be honest with you — this is my first time presenting on a stage like this, so bear with me. The title is "Lessons Learned From the Trenches," and I mean the trenches. What I'm going to share today is a story from my own experience: how we at Iknite didn't treat errors as part of our architecture, how we kept kicking that can down the road, until one day it stopped being my problem alone and became a problem for our whole team.
 
 **Transition → Slide 2:** "Let me tell you exactly what that looks like."
 
 ---
 
-## Slide 2 — Thesis / What We'll Cover
+## Slide 2 — About Me
 
-**Header strip:** `T H E  T H E S I S`
+**Header strip:** `A B O U T  M E`
 
-**Title:** Your error handling is probably lying to you.
+**Title:** About me
 
 **Slide text:**
 
-> Over-wrapping error messages
->
-> Letting your database leak into your business logic
->
-> Reinterpreting errors so the wrong HTTP status fires
->
-> Exposing your provider's internals to every client
+- Namkat Cedrick
+- Software Engineer · Iknite Inc
+- Founder · West / Central African Gophers
+- github.com/namkatcedrickjumtock
+- linkedin.com/in/namkatcedrick
 
-**Bottom line:** *Same codebase. Same stack. Only the error discipline changes.*
+**Speaker notes · 30 seconds:**
 
-**Speaker notes · 1 minute:**
+Before we dive in, let me introduce myself. I'm Namkat Cedrick, a software engineer at Iknite Inc. I organize the West and Central African Gophers community, and I've spent years building distributed systems in Go — including making every mistake you're about to see. The code I'm showing today isn't hypothetical — it's code I've written, debugged at 3am, and had to explain to a CTO.
 
-Everything you'll see came out of a real layered backend that worked beautifully in the happy path and fell apart the moment something failed. Here's the thesis, in one line: in a layered system, handling errors as part of your architecture isn't a detail you bolt on at the end — it is architecture. And we're going to use a sample layered backend API to test that claim in action.
-
-These four patterns — over-wrapping error messages, letting your database leak into your business logic, reinterpreting errors so the wrong status code fires, and letting your external provider's internals reach every client — these aren't theoretical. I've hit every single one in production.
-
-**Transition → Slide 3:** "And it starts with something Go makes look deceptively simple."
+**Transition → Slide 3:** "So here's the story of what happened at Iknite."
 
 ---
 
-## Slide 3 — The Illusion
+## Slide 3 — The Story
 
-**Header strip:** `W H E R E  I T  B E G I N S`
+**Header strip:** `T H E  S T O R Y`
+
+**Title:** What happened at Iknite
+
+**Slide text:**
+
+```
+We built an e-commerce backend.
+We shipped fast.
+We didn't think about errors.
+
+Four things broke in production:
+
+  1  Every layer stamped its name on every error
+  2  Our database driver strings leaked to HTTP responses
+  3  A missing product returned 503 instead of 404
+  4  Stripe's internal codes reached our API clients
+
+The fix wasn't discipline — it was treating errors
+as architecture from the start.
+```
+
+*This isn't a demo. This is what shipped to production.*
+
+**Speaker notes · 1 minute:**
+
+Here's the story. At Iknite, we built an e-commerce backend — five endpoints, three layers, a PostgreSQL database, and a Stripe integration. We shipped it fast, and it worked. The happy path was beautiful. But the moment something failed — a missing product, a declined card, a database timeout — the system fell apart. And not in subtle ways. We were returning 503 for products that didn't exist. We were leaking Stripe charge IDs to end users. Our error messages were paragraphs long. This is the story of how we dug ourselves out, the four anti-patterns we identified along the way, and the principle that ties the fix together.
+
+**Transition → Slide 4:** "But the problem started somewhere simple. Something Go makes look easy."
+
+---
+
+## Slide 4 — The Illusion
+
+**Header strip:** `W H E R E  I T  B E G A N`
 
 **Title:** `if err != nil { return err }`
 
@@ -81,13 +109,13 @@ func GetUser(ctx context.Context, id string) (*User, error) {
 
 **Speaker notes · 1 minute:**
 
-Most of us know that Go was designed with simplicity in mind, especially the error handling philosophy. I've always carried that concept in the back of my mind: if something happens, wrap and return it to the caller and voilà, you're done. Well... [pause] Let me show you why that doesn't work in a layered system.
+Most of us know that Go was designed with simplicity in mind, especially the error handling philosophy. We carried that concept through our codebase: if something happens, wrap and return it to the caller and voilà, you're done. Well... [pause] Let me show you why that doesn't work in a layered system.
 
-**Transition → Slide 4:** "So what actually happens when an error starts at the bottom and needs to reach the top?"
+**Transition → Slide 5:** "So what actually happens when an error starts at the bottom and needs to reach the top?"
 
 ---
 
-## Slide 4 — The Question
+## Slide 5 — The Question
 
 **Header strip:** `T H E  Q U E S T I O N`
 
@@ -112,17 +140,17 @@ By the time it reaches the top — is it still telling the truth?
 
 **Speaker notes · 1 minute:**
 
-Let's look at a concrete example. You get a database error at the bottom of your stack — `sql: no rows in result set`. A record wasn't found. Simple.
+Let's look at a concrete example from our codebase. You get a database error at the bottom of your stack — `sql: no rows in result set`. A record wasn't found. Simple.
 
 But this error doesn't just teleport to the client. It travels. Through persistence. Through services. Through your API handler. And at each stop, a layer can do something to it: add a prefix, rename it, reinterpret its meaning, or let its internal details bleed through.
 
-The question I want you to sit with for the next fifteen minutes is: by the time this error reaches the top — is it still telling the truth?
+The question we sat with after our first production incident was: by the time this error reaches the top — is it still telling the truth?
 
-**Transition → Slide 5:** "And here's what I've found. Every boundary can corrupt meaning."
+**Transition → Slide 6:** "And here's what we found. Every boundary can corrupt meaning."
 
 ---
 
-## Slide 5 — The Problem
+## Slide 6 — The Problem
 
 **Header strip:** `T H E  P R O B L E M`
 
@@ -138,42 +166,17 @@ Amplified     Misinterpreted     Leaked
 
 **Speaker notes · 30 seconds:**
 
-When errors occur in a particular layer, they don't stay there. They need to travel upstream. And as they travel through the layers, they can get amplified, misinterpreted, and impact everything upstream. That's the core problem we're going to explore.
+When errors occur in a particular layer, they don't stay there. They need to travel upstream. And as they travel through the layers, they can get amplified, misinterpreted, and impact everything upstream. That's the core problem we had to solve.
 
-**Transition → Slide 6:** "Let me show you the four specific ways this breaks."
-
----
-
-## Slide 6 — The Anti-Pattern Map
-
-**Header strip:** `T H E  M A P`
-
-**Title:** 4 patterns that break layered systems
-
-**Slide text — 2×2 grid:**
-
-
-| | |
-|---|---|
-| **1. Excessive Wrapping** — every layer stamps its own signature. | **2. Abstraction Leakage** — error messages from one layer bleeding into another. |
-| **3. Meaning Reinterpretation** — error messages getting reinterpreted, firing the wrong status code. | **4. External Provider Leakage** — when error contracts from external systems bleed into your own architecture. |
-
-
-*Every one of these came from production. The demo app reproduces them on purpose.*
-
-**Speaker notes · 1 minute:**
-
-Here are four anti-patterns that I encountered in real life. I'm using a demo application for demonstration purposes, but make no mistake — these are patterns I've seen in production systems. Let me note that anti-pattern 4 is not specific to payments. Any time you integrate with an external system — an email provider, an SMS gateway, cloud storage, a third-party auth service — the same leakage pattern applies.
-
-**Transition → Slide 7:** "Let me show you the app we'll use to demonstrate all four."
+**Transition → Slide 7:** "Let me show you the architecture we were working with."
 
 ---
 
-## Slide 7 — The Demo App
+## Slide 7 — The Architecture
 
-**Header strip:** `T H E  S E T U P`
+**Header strip:** `T H E  A R C H I T E C T U R E`
 
-**Title:** The setup
+**Title:** The architecture we shipped
 
 **Slide text:**
 
@@ -188,34 +191,36 @@ GET  /orders/{id}       → Get order
 ```
 api/            → handlers, routing, writeError
 services/       → business logic
-persistence/    → PostgreSQL + external provider
+persistence/    → PostgreSQL + Stripe
 cmd/            → wiring
 ```
 
-*3 dependencies. No framework. No ORM. Every line of error logic is explicit.*
+*3 dependencies. No framework. No ORM. Every line of error logic was explicit. And it was broken.*
 
 **Speaker notes · 1 minute:**
 
-Let me introduce the demo app. It's a minimal e-commerce backend with five endpoints: list products, get a product, add to cart, checkout, and get an order. Three dependencies — no framework, no ORM, no error handling library. Every line of error logic is explicit on purpose. The architecture has three layers: handlers at the top, business logic in the middle, and persistence plus an external provider at the bottom.
+This is the architecture we shipped at Iknite. Five endpoints, three layers, three dependencies — no framework, no ORM. Everything was explicit. We were proud of how clean the happy path was. But we hadn't designed the error path at all. We just assumed errors would bubble up and somehow work out.
 
-I'm going to demo this in two passes. First, the bad version — where all four anti-patterns live. Then, after we talk about the fix, I'll switch to the good version and show you the same scenarios with the error discipline applied. Let's see what happens when things fail.
+They didn't.
 
-**Transition → Slide 8:** [switch to terminal] "Let's start with Scenario 1."
+The architecture has three layers: handlers at the top, business logic in the middle, and persistence plus Stripe at the bottom. Every error had to travel through all three. And at every stop, something went wrong.
+
+**Transition → Slide 8:** "Let me show you the first thing that broke."
 
 ---
 
 ┌─────────────────────────────────────────────────┐
-│           LIVE DEMO: v0.1 (Bad Version)         │
-│              Slides 8–15 · ~10 min              │
+│   WHAT BROKE: Original Code (v0.1)              │
+│              Slides 8–15 · ~10 min               │
 └─────────────────────────────────────────────────┘
 
 ---
 
-## Slide 8 — Demo: Scenario 1 (Over-wrapping)
+## Slide 8 — Broken: Excessive Wrapping
 
-**Header strip:** `A N T I - P A T T E R N  1  ·  T H E  E V I D E N C E`
+**Header strip:** `W H A T  B R O K E  ·  1  O F  4`
 
-**Title:** Scenario 1: One missing row, five prefixes
+**Title:** One missing row, five prefixes
 
 **Slide text:**
 
@@ -231,17 +236,17 @@ curl localhost:8080/orders/o_ghost
 
 **Speaker notes · 1.5 minutes:**
 
-[Switch to terminal] Let's run the app on the v0.1 branch and request an order that doesn't exist. [Run command] Look at that. One missing row — five clauses. Every layer stamped its own signature onto this error on the way out: `handler`, `service layer`, `order lookup`, `repository`, `database`. The root cause — `sql: no rows in result set` — is buried at the very end of a paragraph.
+[Switch to terminal] Let me show you what we saw in production. We request an order that doesn't exist and look at the response. One missing row — five clauses. Every layer stamped its own signature onto this error on the way out: `handler`, `service layer`, `order lookup`, `repository`, `database`. The root cause — `sql: no rows in result set` — is buried at the very end of a paragraph.
 
-This is the core problem with excessive wrapping: it becomes very hard to quickly pinpoint where an error originated, and these prefixes don't add context that actually helps the engineer debug faster. None of these stamps tell the caller anything they couldn't derive from the route and the root cause alone.
+This was our first clue that something was wrong. When an engineer gets this error at 3am, they have to parse a paragraph to find the actual problem. None of these prefixes tell you anything you couldn't derive from the route and the root cause alone.
 
-**Transition → Slide 9:** "Let me show you the signal buried inside that noise."
+**Transition → Slide 9:** "Here's what we realized about the signal buried inside that noise."
 
 ---
 
-## Slide 9 — Scenario 1 Post-Mortem
+## Slide 9 — What We Realized: Signal vs. Noise
 
-**Header strip:** `A N T I - P A T T E R N  1  ·  T H E  L E S S O N`
+**Header strip:** `W H A T  W E  R E A L I Z E D`
 
 **Title:** Signal vs. noise
 
@@ -269,15 +274,15 @@ Signal is the route that was called and the root cause at the bottom. Those two 
 
 Look at this chain: persistence stamps "repository: GetOrder query failed", service stamps "service layer: failed to retrieve order details", handler stamps "handler: GET /orders/{id} failed". Three layers, each adding its signature for no reason. Over-wrapping doesn't add information — it buries the signal under noise.
 
-**Transition → Slide 10:** "That's anti-pattern 1. Let me show you anti-pattern 2."
+**Transition → Slide 10:** "That was the first thing we found. The second was worse."
 
 ---
 
-## Slide 10 — Demo: Scenario 2 (Abstraction Leakage)
+## Slide 10 — Broken: Abstraction Leakage
 
-**Header strip:** `A N T I - P A T T E R N  2  ·  T H E  E V I D E N C E`
+**Header strip:** `W H A T  B R O K E  ·  2  O F  4`
 
-**Title:** Scenario 2: Your database just leaked into your HTTP response
+**Title:** Our database leaked into our HTTP response
 
 **Slide text:**
 
@@ -293,19 +298,19 @@ curl localhost:8080/products/p_ghost
 
 **Speaker notes · 1.5 minutes:**
 
-[Switch to terminal] Now let's request a product that doesn't exist. [Run command] See `sql: no rows in result set` in the HTTP response? That's a PostgreSQL driver message — live in an API response to an end user. Your client now knows what database you run. It also knows whether or not this product exists, because it's reading a driver-level string that was never meant to be public.
+[Switch to terminal] Here's another one from our logs. See `sql: no rows in result set` in the HTTP response? That's a PostgreSQL driver message — live in an API response to an end user. Your client now knows what database you run. It also knows whether or not this product exists, because it's reading a driver-level string that was never meant to be public.
 
-[Switch to editor] Here's why. `services/services.go` line 6: `import "database/sql"`. Line 9: `import "github.com/lib/pq"`. Your business layer is importing infrastructure packages directly. And look at the condition: `errors.Is(err, sql.ErrNoRows)` — business logic branching on a database-level error type. The SQL driver's string is now your API contract.
+[Switch to editor] Here's why. Our `services/services.go` line 6: `import "database/sql"`. Line 9: `import "github.com/lib/pq"`. Our business layer was importing infrastructure packages directly. `errors.Is(err, sql.ErrNoRows)` — business logic branching on a database-level error type. The SQL driver's string was our API contract.
 
-**Transition → Slide 11:** "Let me show you exactly what that coupling costs you."
+**Transition → Slide 11:** "Here's what that coupling cost us."
 
 ---
 
-## Slide 11 — Scenario 2 Post-Mortem
+## Slide 11 — What We Realized: Swap the Store, Break the Caller
 
-**Header strip:** `A N T I - P A T T E R N  2  ·  T H E  L E S S O N`
+**Header strip:** `W H A T  W E  R E A L I Z E D`
 
-**Title:** If we swap the store, we break the caller
+**Title:** Swap the store, break the caller
 
 **Slide text:**
 
@@ -319,23 +324,23 @@ services/services.go:66    if errors.Is(err, sql.ErrNoRows) { ... }  ← busines
 ```
 
 *Each layer's errors should be independent of every other layer.*
-*Translate at the boundary: the repo returns ErrProductNotFound — nothing above persistence imports database/sql.*
+*We learned: translate at the boundary. The repo returns ErrProductNotFound — nothing above persistence imports database/sql.*
 
 **Speaker notes · 1.5 minutes:**
 
-This is the real danger of abstraction leakage: coupling that looks invisible in the code but breaks at runtime. Swap Postgres for MongoDB tomorrow and `errors.Is(err, sql.ErrNoRows)` stops matching — silently. The service layer isn't just aware of the database driver; it depends on it.
+This was the real cost of our abstraction leakage: coupling that looked invisible in the code but would have broken at runtime. Swap Postgres for MongoDB tomorrow and `errors.Is(err, sql.ErrNoRows)` stops matching — silently. The service layer isn't just aware of the database driver; it depends on it.
 
 The goal of a layered architecture is independence: each layer's errors should be self-contained. You should be able to swap persistence without touching services. Error handling is part of that contract. When your service layer imports `database/sql`, you've broken layer independence and coupled two layers that should never know about each other. The fix is one sentence: translate at the boundary. The repo returns `ErrProductNotFound` — a domain sentinel. Nothing above persistence ever imports `database/sql` again.
 
-**Transition → Slide 12:** "Now let me show you what happens when that same leak gets worse."
+**Transition → Slide 12:** "And then we found something even worse — where the error's meaning actually changed."
 
 ---
 
-## Slide 12 — Demo: Scenario 3 (Meaning Reinterpretation)
+## Slide 12 — Broken: Meaning Reinterpretation
 
-**Header strip:** `A N T I - P A T T E R N  3  ·  T H E  E V I D E N C E`
+**Header strip:** `W H A T  B R O K E  ·  3  O F  4`
 
-**Title:** Scenario 3: Same root cause, wrong status code
+**Title:** Same root cause, wrong status code
 
 **Slide text:**
 
@@ -353,15 +358,15 @@ HTTP/1.1 503 Service Unavailable
 
 **Speaker notes · 1.5 minutes:**
 
-[Switch to terminal] Same root cause as Scenario 2 — `p_ghost` doesn't exist. But this time we're adding it to a cart. The service layer receives `sql.ErrNoRows` and relabels it as "stock data unavailable". [Point to response] Look at the HTTP status: 503 Service Unavailable, not 404 Not Found. A missing product just told the client "try again later." That's the wrong response.
+[Switch to terminal] Same root cause as before — `p_ghost` doesn't exist. But this time we're adding it to a cart. The service layer receives `sql.ErrNoRows` and relabels it as "stock data unavailable". [Point to response] Look at the HTTP status: 503 Service Unavailable, not 404 Not Found. We were telling clients a missing product was a temporary server error. Clients that retry on 503 would hammer our servers forever on a permanently missing product.
 
-**Transition → Slide 13:** "Let me show you how this relabeling breaks the HTTP contract."
+**Transition → Slide 13:** "Here's how this relabeling broke our HTTP contract."
 
 ---
 
-## Slide 13 — Scenario 3 Post-Mortem
+## Slide 13 — What We Realized: A Status Code Is a Promise
 
-**Header strip:** `A N T I - P A T T E R N  3  ·  T H E  L E S S O N`
+**Header strip:** `W H A T  W E  R E A L I Z E D`
 
 **Title:** A status code is a promise
 
@@ -382,15 +387,15 @@ api writeError: strings.Contains(msg, "unavailable") → 503  ← matches first
 
 The error's meaning changed at the service layer. "Product not found" became "stock data unavailable". Then `writeError` checks strings in order — "unavailable" matches before "no rows" — so the client gets 503 instead of 404. A client that retries on 503 will hammer your server on a permanently missing product. That's exactly the wrong behavior. And notice: the `writeError` switch is order-dependent. Swap two cases and the entire system returns different HTTP statuses. That's not architecture — that's luck.
 
-**Transition → Slide 14:** "Now the last anti-pattern — and this one has real security implications."
+**Transition → Slide 14:** "Now the last one — and this one had real security implications."
 
 ---
 
-## Slide 14 — Demo: Scenario 4 (External Provider Leakage)
+## Slide 14 — Broken: External Provider Leakage
 
-**Header strip:** `A N T I - P A T T E R N  4  ·  T H E  E V I D E N C E`
+**Header strip:** `W H A T  B R O K E  ·  4  O F  4`
 
-**Title:** Stripe's internals, in your API
+**Title:** Stripe's internals, in our API
 
 **Slide text:**
 
@@ -417,19 +422,19 @@ curl -X POST localhost:8080/checkout | jq .
 
 **Speaker notes · 1.5 minutes:**
 
-[Switch to terminal] Let me set the provider to card declined and checkout. [Run commands] Look at the response: `request_id=req_7NdMtHtVhh5i2J`, `type=card_error`, `code=card_declined`, `decline_code=insufficient_funds`, `charge=ch_3RJXsD2eZvKYlo2C0B5X3Y7z`. These are Stripe's internal request tracing ID, error category, machine-readable code, issuer decline reason, and internal charge reference — all in an HTTP response to an end user.
+[Switch to terminal] This was the one that got our security team's attention. We set the provider to card declined and checked out. Look at the response: `request_id=req_7NdMtHtVhh5i2J`, `type=card_error`, `code=card_declined`, `decline_code=insufficient_funds`, `charge=ch_3RJXsD2eZvKYlo2C0B5X3Y7z`. These are Stripe's internal request tracing ID, error category, machine-readable code, issuer decline reason, and internal charge reference — all in an HTTP response to an end user.
 
 Security: a Stripe request ID and charge ID fingerprint your account. An attacker with this knows your processor, can correlate payment attempts, and has a head start probing your setup. Portability: switch to Braintree or Adyen and every client parsing these field names breaks silently. And notice: the only reason `writeError` catches this at all is a fragile `strings.Contains` check on `"stripe"`. Rename the provider tomorrow and the 402 status silently breaks.
 
-This isn't just payments. Email providers, SMS gateways, storage APIs, auth services — any external integration. Your provider is an implementation detail. Treat it like one.
+This isn't just payments. Email providers, SMS gateways, storage APIs, auth services — any external integration. Your provider is an implementation detail. We learned to treat it like one.
 
-**Transition → Slide 15:** "Let me break down exactly what leaked."
+**Transition → Slide 15:** "Here's exactly what leaked and how we sealed it."
 
 ---
 
-## Slide 15 — Scenario 4 Post-Mortem
+## Slide 15 — What We Did: Translate at the Boundary
 
-**Header strip:** `A N T I - P A T T E R N  4  ·  T H E  L E S S O N`
+**Header strip:** `W H A T  W E  D I D`
 
 **Title:** Translate at the boundary
 
@@ -446,7 +451,7 @@ StripeError {
 }
 ```
 
-*None of this should reach the client. Translate to a domain error at the persistence boundary.*
+*None of this should reach the client. We translate to a domain error at the persistence boundary.*
 
 ```go
 // persistence — StripeError never leaves this package
@@ -461,15 +466,15 @@ func (p *StripeProvider) Charge(ctx, amount) error {
 
 **Speaker notes · 1.5 minutes:**
 
-Let me break down what leaked: Stripe's request tracing ID, error category, machine-readable code, issuer decline reason, and internal charge reference. This is Stripe's internal error schema, exposed as your public API contract.
+Let me break down what leaked: Stripe's request tracing ID, error category, machine-readable code, issuer decline reason, and internal charge reference. This was Stripe's internal error schema, exposed as our public API contract.
 
 The fix is the same principle applied to external systems: the persistence layer owns the translation. `StripeError` never leaves the persistence package. It becomes `PaymentError{Code: "payment_declined", Retryable: false}` — a domain type your clients can depend on. Switch from Stripe to Braintree? You update one translation function. The service layer doesn't change. The API layer doesn't change. Your clients don't change. Your provider was always an implementation detail — now it's treated like one.
 
-**Transition → Slide 16:** "So what's the fix? Let's talk about the principle first, then I'll show you the good version."
+**Transition → Slide 16:** "So what was the principle that tied all of this together?"
 
 ---
 
-## Slide 16 — The Principle
+## Slide 16 — The Principle We Adopted
 
 **Header strip:** `T H E  P R I N C I P L E`
 
@@ -487,25 +492,25 @@ Infrastructure owns  → database failures, external system failures
 
 **Speaker notes · 1 minute:**
 
-So what's the fix? Errors are architecture. Each layer owns its own errors. The presentation layer owns invalid requests, malformed payloads, bad params. The domain layer owns business rule failures and domain invariants. The infrastructure layer owns database failures and external system failures. The layer where an error originates defines its meaning. Propagate upward unchanged. Translate only at boundaries.
+So what was the fix? Errors are architecture. Each layer owns its own errors. The presentation layer owns invalid requests, malformed payloads, bad params. The domain layer owns business rule failures and domain invariants. The infrastructure layer owns database failures and external system failures. The layer where an error originates defines its meaning. Propagate upward unchanged. Translate only at boundaries.
 
-Three rules:
+Three rules we adopted:
 
 1. Own your errors at the boundary — the persistence layer translates `sql.ErrNoRows` to `ErrProductNotFound`, and no layer above ever sees a database error.
 2. Don't reinterpret meaning — "not found" stays "not found" all the way to the HTTP handler.
 3. External systems are implementation details — translate their errors at the service boundary, your clients should never see provider codes.
 
-**Transition → Slide 17:** "Here's what that looks like in code."
+**Transition → Slide 17:** "Here's what that looked like in our codebase."
 
 ---
 
-## Slide 17 — The Fix: Before & After
+## Slide 17 — Before & After
 
 **Header strip:** `B E F O R E  ·  A F T E R`
 
-**Title:** Same codebase. Different discipline.
+**Title:** Same codebase. Errors as architecture.
 
-**Slide text — Before (v0.1):**
+**Slide text — Before (our original code):**
 
 ```go
 // services — imports database/sql, relabels errors, wraps everything
@@ -518,7 +523,7 @@ func (s *service) GetProduct(ctx, id) (*Product, error) {
 }
 ```
 
-**Slide text — After (v0.2):**
+**Slide text — After (the refactor):**
 
 ```go
 // persistence — translates at the boundary
@@ -556,7 +561,7 @@ func (h *Handler) writeError(w, err) {
 
 **Speaker notes · 2 minutes:**
 
-Here's what changes. In v0.1, the persistence layer wraps without translating — `sql.ErrNoRows` propagates raw. In v0.2, persistence translates `sql.ErrNoRows` to `ErrProductNotFound` at the boundary. The database driver never leaves the persistence package. Services no longer import `database/sql` — they just propagate errors unchanged. No wrapping, no reinterpretation. And `writeError` in the API layer now uses `errors.Is` on typed sentinels instead of string matching. No order-dependent switch cases. No fragile string comparisons. And for external providers, `FlutterwaveError` gets translated to `PaymentError` at the persistence boundary — no provider internals reach the client.
+Here's what changed in our codebase. In the original code, the persistence layer wraps without translating — `sql.ErrNoRows` propagates raw. In the refactored version, persistence translates `sql.ErrNoRows` to `ErrProductNotFound` at the boundary. The database driver never leaves the persistence package. Services no longer import `database/sql` — they just propagate errors unchanged. No wrapping, no reinterpretation. And `writeError` in the API layer now uses `errors.Is` on typed sentinels instead of string matching. No order-dependent switch cases. No fragile string comparisons. And for external providers, `StripeError` gets translated to `PaymentError` at the persistence boundary — no provider internals reach the client.
 
 **Transition → Slide 18:** "Let me be precise about what actually changed."
 
@@ -571,38 +576,38 @@ Here's what changes. In v0.1, the persistence layer wraps without translating �
 **Slide text:**
 
 
-| Before (v0.1)                                 | After (v0.2)                                           |
-| --------------------------------------------- | ------------------------------------------------------ |
-| `database/sql` imported in business logic     | No infrastructure imports in services                  |
-| `sql.ErrNoRows` propagates raw to HTTP        | Translated to `ErrProductNotFound` at the boundary     |
-| Service relabels "not found" as "unavailable" | "Not found" stays "not found" through all layers       |
-| `writeError` uses `strings.Contains` matching | `writeError` uses `errors.Is` on typed sentinels       |
-| `FlutterwaveError` leaks to client            | Translated to `PaymentError` at the boundary           |
-| Each layer wraps with `fmt.Errorf`            | Errors propagate unchanged unless a layer adds meaning |
+| Before (original code)                         | After (the refactor)                                     |
+| ---------------------------------------------- | -------------------------------------------------------- |
+| `database/sql` imported in business logic      | No infrastructure imports in services                    |
+| `sql.ErrNoRows` propagates raw to HTTP         | Translated to `ErrProductNotFound` at the boundary       |
+| Service relabels "not found" as "unavailable"  | "Not found" stays "not found" through all layers         |
+| `writeError` uses `strings.Contains` matching  | `writeError` uses `errors.Is` on typed sentinels         |
+| `StripeError` leaks to client                  | Translated to `PaymentError` at the boundary             |
+| Each layer wraps with `fmt.Errorf`             | Errors propagate unchanged unless a layer adds meaning   |
 
 
-*Same stack. Same endpoints. Same database. Only the error discipline changed.*
+*Same stack. Same endpoints. Same database. The difference: the refactored version treats errors as architecture — owned at layer boundaries, not bolted on after.*
 
 **Speaker notes · 1 minute:**
 
-Let me be clear about what changed and what didn't. Same stack. Same endpoints. Same database. Same three dependencies. The only thing that changed is the error discipline. The persistence layer translates errors at the boundary instead of letting them leak. The service layer propagates errors instead of wrapping them. The API layer maps sentinels with `errors.Is` instead of string matching. The external provider translates its internal errors to a domain type. That's it.
+Let me be clear about what changed and what didn't. Same stack. Same endpoints. Same database. Same three dependencies. The only thing that changed is that we started treating errors as architecture — owned at layer boundaries, translated at boundaries, propagated upward unchanged. The persistence layer translates errors at the boundary instead of letting them leak. The service layer propagates errors instead of wrapping them. The API layer maps sentinels with `errors.Is` instead of string matching. The external provider translates its internal errors to a domain type. That's it.
 
-**Transition → Slide 19:** "Now let me prove it. Let me switch to v0.2 and run the same scenarios."
+**Transition → Slide 19:** "Now let me prove it. Same scenarios, after the refactor."
 
 ---
 
 ┌─────────────────────────────────────────────────┐
-│          LIVE DEMO: v0.2 (Good Version)          │
-│              Slides 19 · ~4 min                  │
+│          AFTER THE REFACTOR (v0.2)               │
+│              Slide 19 · ~4 min                   │
 └─────────────────────────────────────────────────┘
 
 ---
 
-## Slide 19 — v0.2 Demo: The Good Version
+## Slide 19 — After the Refactor
 
 **Header strip:** `T H E  F I X  I N  A C T I O N`
 
-**Title:** Let's see the fix in action
+**Title:** Same scenarios, after the refactor
 
 **Slide text:**
 
@@ -619,7 +624,7 @@ make run
 curl localhost:8080/orders/o_ghost | jq .
 ```
 
-**Expected response (v0.2):**
+**Expected response (refactored):**
 
 ```json
 {
@@ -627,7 +632,7 @@ curl localhost:8080/orders/o_ghost | jq .
 }
 ```
 
-**Speaker notes:** "Let me switch to the v0.2 branch and run the same request. [Run command] Same missing order, same root cause. But now the response is just: 'order not found.' The persistence layer translated `sql.ErrNoRows` to `ErrOrderNotFound`, the service layer propagated it unchanged, and the API layer mapped it to 404 via `errors.Is`. No paragraph, no prefixes, no database driver strings."
+**Speaker notes:** "Let me switch to the refactored branch and run the same request. [Run command] Same missing order, same root cause. But now the response is just: 'order not found.' The persistence layer translated `sql.ErrNoRows` to `ErrOrderNotFound`, the service layer propagated it unchanged, and the API layer mapped it to 404 via `errors.Is`. No paragraph, no prefixes, no database driver strings."
 
 ### Scenario 3 fix — Meaning reinterpretation → Correct status code (~1 min)
 
@@ -637,7 +642,7 @@ curl -i -X POST localhost:8080/cart/items \
   -d '{"product_id":"p_ghost","quantity":1}'
 ```
 
-**Expected response (v0.2):**
+**Expected response (refactored):**
 
 ```
 HTTP/1.1 404 Not Found
@@ -673,7 +678,7 @@ curl -s -X POST localhost:8080/demo/payment-mode \
   -d '{"mode":"ok"}'
 ```
 
-**Expected response (v0.2):**
+**Expected response (refactored):**
 
 ```json
 {
@@ -681,15 +686,15 @@ curl -s -X POST localhost:8080/demo/payment-mode \
 }
 ```
 
-**Speaker notes:** [Run commands interactively] "Now let's set the provider to card declined and checkout again. [Run commands] Look at the response: 'payment failed: payment_declined.' No FW-9082. No eu-west. No transaction references. No acquirer internals. The `FlutterwaveError` was translated to a `PaymentError` at the persistence boundary — the service layer and the HTTP layer never saw provider internals. Your client gets a clean, portable error. Switch providers tomorrow and your API contract doesn't change."
+**Speaker notes:** [Run commands interactively] "Now let's set the provider to card declined and checkout again. [Run commands] Look at the response: 'payment failed: payment_declined.' No request_id. No charge references. No Stripe internals. The `StripeError` was translated to a `PaymentError` at the persistence boundary — the service layer and the HTTP layer never saw provider internals. Your client gets a clean, portable error. Switch providers tomorrow and your API contract doesn't change."
 
-**Transition → Slide 20:** "Three things to take home."
+**Transition → Slide 20:** "Three things we took away from this."
 
 ---
 
-## Slide 20 — Takeaways
+## Slide 20 — What We Learned
 
-**Header strip:** `I M P O R T A N T  C L A R I F I C A T I O N`
+**Header strip:** `W H A T  W E  L E A R N E D`
 
 **Title:** This is not about perfect errors
 
@@ -707,7 +712,7 @@ This is not about perfect errors
 
 I want to be clear about what I'm not saying. I'm not saying your error messages need to be beautiful. I'm not saying you need an error-handling library, a framework, or a lint rule for every case.
 
-Three things. Preserve meaning as errors cross boundaries — "not found" stays "not found." Reduce coupling between layers — the service layer should not need to know what database you're running. Enforce architectural clarity — every layer's `errors.go` is a contract. It says: these are the error conditions this layer can produce. Everything else is an implementation detail.
+Three things we took away. Preserve meaning as errors cross boundaries — "not found" stays "not found." Reduce coupling between layers — the service layer should not need to know what database you're running. Enforce architectural clarity — every layer's `errors.go` is a contract. It says: these are the error conditions this layer can produce. Everything else is an implementation detail.
 
 When you treat errors as architecture from the start, you get three things in return: a system that's easier to reason about, a system that's easier to debug at 3am in a log aggregator, and a system that's easier to evolve — because your layers are genuinely decoupled.
 
@@ -737,7 +742,7 @@ Namkat Cedrick  |  @namkatcedrickjumtock  |  github.com/namkatcedrickjumtock/e-c
 
 Go gives us simple primitives. `error` is an interface with one method. `errors.Is`, `errors.As`, `fmt.Errorf` — elegant, minimal, powerful. But simplicity doesn't scale automatically. Architecture determines whether these primitives stay simple as the system grows.
 
-The repo is open source — clone it, run the bad version on `v0.1`, run the good version on `v0.2`, and see the difference yourself. Both branches have the same endpoints, the same database, the same three dependencies. Only the error discipline changed.
+The repo is open source — clone it, run the original code on `v0.1`, run the refactored version on `v0.2`, and see the difference yourself. Both branches have the same endpoints, the same database, the same three dependencies. Only the error discipline changed.
 
 Thank you for your time. Questions?
 
@@ -746,29 +751,28 @@ Thank you for your time. Questions?
 ## Time Budget Summary
 
 
-| Section                               | Slides | Mode | Time        | Cumulative  |
-| ------------------------------------- | ------ | ---- | ----------- | ----------- |
-| Introduction + thesis                 | 1–2    | Talk | 1.5 min     | 0:00–1:30   |
-| The Illusion → The Problem            | 3–5    | Talk | 2.5 min     | 1:30–4:00   |
-| Anti-pattern map                      | 6      | Talk | 1 min       | 4:00–5:00   |
-| Demo app setup                        | 7      | Talk | 1 min       | 5:00–6:00   |
-| Scenario 1: Over-wrapping             | 8–9    | Demo | 3 min       | 6:00–9:00   |
-| Scenario 2: Abstraction Leakage       | 10–11  | Demo | 3 min       | 9:00–12:00  |
-| Scenario 3: Meaning Reinterpretation  | 12–13  | Demo | 3 min       | 12:00–15:00 |
-| Scenario 4: External Provider Leakage | 14–15  | Demo | 3 min       | 15:00–18:00 |
-| The Principle                         | 16     | Talk | 1 min       | 18:00–19:00 |
-| Before & After / What Changed         | 17–18  | Talk | 3 min       | 19:00–22:00 |
-| v0.2 Demo: Good Version               | 19     | Demo | 4 min       | 22:00–26:00 |
-| Takeaways + Close                     | 20–21  | Talk | 1.5 min     | 26:00–27:30 |
-| Buffer for Q&A                        | —      | —    | 2.5 min     | 27:30–30:00 |
-| **Total**                             |        |      | **~30 min** |             |
-
+| Section                                 | Slides | Mode  | Time        | Cumulative  |
+| --------------------------------------- | ------ | ----- | ----------- | ----------- |
+| Title + About Me                        | 1–2    | Talk  | 1 min       | 0:00–1:00   |
+| The Story                               | 3      | Talk  | 1 min       | 1:00–2:00   |
+| The Illusion → The Problem              | 4–6    | Talk  | 2.5 min     | 2:00–4:30   |
+| The Architecture                        | 7      | Talk  | 1 min       | 4:30–5:30   |
+| Broken 1: Over-wrapping                 | 8–9    | Demo  | 3 min       | 5:30–8:30   |
+| Broken 2: Abstraction Leakage           | 10–11  | Demo  | 3 min       | 8:30–11:30  |
+| Broken 3: Meaning Reinterpretation      | 12–13  | Demo  | 3 min       | 11:30–14:30 |
+| Broken 4: External Provider Leakage     | 14–15  | Demo  | 3 min       | 14:30–17:30 |
+| The Principle                           | 16     | Talk  | 1 min       | 17:30–18:30 |
+| Before & After / What Changed           | 17–18  | Talk  | 3 min       | 18:30–21:30 |
+| After the Refactor                      | 19     | Demo  | 4 min       | 21:30–25:30 |
+| What We Learned + Close                 | 20–21  | Talk  | 1.5 min     | 25:30–27:00 |
+| Buffer for Q&A                          | —      | —     | 3 min       | 27:00–30:00 |
+| **Total**                               |        |       | **~30 min** |             |
 
 ---
 
-## v0.2 Demo Quick Reference
+## After the Refactor — Quick Reference
 
-### Switch to v0.2 branch
+### Switch to refactored branch
 
 ```bash
 git checkout v0.2
@@ -812,7 +816,7 @@ curl -s -X POST localhost:8080/demo/payment-mode \
 # Checkout
 curl -s -X POST localhost:8080/checkout | jq .
 # Expected: {"error": "payment failed: payment_declined"}  → 402
-#           No FW-9082, no region, no tx_ref, no acquirer codes
+#           No request_id, no charge ref, no Stripe codes
 
 # Reset
 curl -s -X POST localhost:8080/demo/payment-mode \
@@ -822,7 +826,7 @@ curl -s -X POST localhost:8080/demo/payment-mode \
 
 ---
 
-## v0.1 Demo Quick Reference (Bad Version)
+## Original Code — Quick Reference
 
 ### Setup (run once before demo)
 
@@ -892,27 +896,26 @@ curl -s -X POST localhost:8080/demo/payment-mode \
 ## Transition Cheat Sheet (Quick Reference During Talk)
 
 
-| From → To     | Transition Line                                                                                 |
-| ------------- | ----------------------------------------------------------------------------------------------- |
-| Slide 1 → 2   | "Let me tell you exactly what that looks like."                                                 |
-| Slide 2 → 3   | "And it starts with something Go makes look deceptively simple."                                |
-| Slide 3 → 4   | "So what actually happens when an error starts at the bottom and needs to reach the top?"       |
-| Slide 4 → 5   | "And here's what I've found. Every boundary can corrupt meaning."                               |
-| Slide 5 → 6   | "Let me show you the four specific ways this breaks."                                           |
-| Slide 6 → 7   | "Let me show you the app we'll use to demonstrate all four."                                    |
-| Slide 7 → 8   | [switch to terminal] "Let's start with Scenario 1."                                             |
-| Slide 8 → 9   | "Let me show you the signal buried inside that noise."                                          |
-| Slide 9 → 10  | "That's anti-pattern 1. Let me show you anti-pattern 2."                                        |
-| Slide 10 → 11 | "Let me show you exactly what that coupling costs you."                                         |
-| Slide 11 → 12 | "Now let me show you what happens when that same leak gets worse."                              |
-| Slide 12 → 13 | "Let me show you how this relabeling breaks the HTTP contract."                                 |
-| Slide 13 → 14 | "Now the last anti-pattern — and this one has real security implications."                      |
-| Slide 14 → 15 | "Let me break down exactly what leaked."                                                        |
-| Slide 15 → 16 | "So what's the fix? Let's talk about the principle first, then I'll show you the good version." |
-| Slide 16 → 17 | "Here's what that looks like in code."                                                          |
-| Slide 17 → 18 | "Let me be precise about what actually changed."                                                |
-| Slide 18 → 19 | "Now let me prove it. Let me switch to v0.2 and run the same scenarios."                        |
-| Slide 19 → 20 | "Three things to take home."                                                                    |
-| Slide 20 → 21 | "Thank you."                                                                                    |
-
+| From → To     | Transition Line                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| Slide 1 → 2   | "Let me tell you exactly what that looks like."                                                       |
+| Slide 2 → 3   | "So here's the story of what happened at Iknite."                                                     |
+| Slide 3 → 4   | "But the problem started somewhere simple. Something Go makes look easy."                             |
+| Slide 4 → 5   | "So what actually happens when an error starts at the bottom and needs to reach the top?"             |
+| Slide 5 → 6   | "And here's what we found. Every boundary can corrupt meaning."                                       |
+| Slide 6 → 7   | "Let me show you the architecture we were working with."                                              |
+| Slide 7 → 8   | [switch to terminal] "Let me show you the first thing that broke."                                    |
+| Slide 8 → 9   | "Here's what we realized about the signal buried inside that noise."                                  |
+| Slide 9 → 10  | "That was the first thing we found. The second was worse."                                            |
+| Slide 10 → 11 | "Here's what that coupling cost us."                                                                  |
+| Slide 11 → 12 | "And then we found something even worse — where the error's meaning actually changed."                |
+| Slide 12 → 13 | "Here's how this relabeling broke our HTTP contract."                                                 |
+| Slide 13 → 14 | "Now the last one — and this one had real security implications."                                     |
+| Slide 14 → 15 | "Here's exactly what leaked and how we sealed it."                                                    |
+| Slide 15 → 16 | "So what was the principle that tied all of this together?"                                           |
+| Slide 16 → 17 | "Here's what that looked like in our codebase."                                                       |
+| Slide 17 → 18 | "Let me be precise about what actually changed."                                                      |
+| Slide 18 → 19 | "Now let me prove it. Same scenarios, after the refactor."                                            |
+| Slide 19 → 20 | "Three things we took away from this."                                                                |
+| Slide 20 → 21 | "Thank you."                                                                                          |
 

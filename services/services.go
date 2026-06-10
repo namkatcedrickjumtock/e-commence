@@ -83,18 +83,15 @@ func (s *service) CreateProduct(ctx context.Context, name string, priceCents int
 	return created, nil
 }
 
-// GetProduct retrieves a single product by ID and surfaces a not-found error to the caller.
 func (s *service) GetProduct(ctx context.Context, id string) (*persistence.Product, error) {
 	product, err := s.repo.Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf(
-				"service: product not found in database catalog: sql query returned no rows: %w", err,
+				"product not found in database catalog: %w", err,
 			)
 		}
-		return nil, fmt.Errorf(
-			"service layer: failed to retrieve product: product fetch failed: %w", err,
-		)
+		return nil, err
 	}
 	return product, nil
 }
@@ -156,11 +153,11 @@ func (s *service) Checkout(ctx context.Context) (*CheckoutOutput, error) {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf(
-				"service: checkout failed: cart query returned no rows from database: %w", err,
+				"cart query returned no rows from database: %w", err,
 			)
 		}
 		return nil, fmt.Errorf(
-			"service layer: checkout failed: cart retrieval error: %w", err,
+			"cart retrieval error: %w", err,
 		)
 	}
 	if len(items) == 0 {
@@ -170,28 +167,26 @@ func (s *service) Checkout(ctx context.Context) (*CheckoutOutput, error) {
 	total, err := s.totalForItems(ctx, items)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"service layer: checkout failed: price calculation failed: %w", err,
+			"price calculation failed: %w", err,
 		)
 	}
 
-	// Scenario 4: FlutterwaveError passes through with no translation —
-	// internal fields (Code, Region, TxRef) will appear in the HTTP response.
 	if err := s.payments.Charge(ctx, total); err != nil {
 		return nil, fmt.Errorf(
-			"service layer: payment processing failed: %w", err,
+			"payment processing failed: %w", err,
 		)
 	}
 
 	order, err := s.repo.CreateOrder(ctx, persistence.Order{TotalCents: total, Items: items})
 	if err != nil {
 		return nil, fmt.Errorf(
-			"service layer: checkout failed: order creation failed: %w", err,
+			"order creation failed: %w", err,
 		)
 	}
 
 	if err := s.repo.Clear(ctx); err != nil {
 		return nil, fmt.Errorf(
-			"service layer: checkout failed: cart cleanup failed: %w", err,
+			"cart cleanup failed: %w", err,
 		)
 	}
 
